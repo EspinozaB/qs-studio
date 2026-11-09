@@ -3,13 +3,23 @@
 A modern, portable toolkit for the Alesis QS6 / QS7 / QS8 / QSR. One `.exe`, no installer, no registry:
 settings are saved next to the exe (`QSStudio.settings`).
 
-## Status: milestone 1 (card + SysEx toolkit)
+## What it does
 
 | Tab | What it does |
 |---|---|
-| Device | Pick MIDI in/out, connect, **Identify synth** (model + OS version via Universal Device Inquiry). |
-| SysEx Librarian | Record dumps from the QS, **Ask QS to Send All** (opcode 0C), save/open `.syx`, list program and mix names, send `.syx` back (paced for the QS). |
-| Card Tools | Open QCard / QuadraCard / Sound Bridge images (R and Z series): voices, programs, mixes. Export WAVs (loop + root key) or SFZ instruments. **Test card reader**, **Read card from QS** over MIDI, **Write image to FLASH card** (Sound Bridge replacement). |
+| Library | Every bank (User, Preset 1-3, GenMIDI, Card A/B) with program names and search. Click or arrow through programs to select them on the QS; double-click to edit. **Read bank from QS** fills in names once; they are cached in `QSStudio.library` next to the exe. Load a .syx into a bank, send a program to the edit buffer, or store it to a User slot. |
+| Editor | All four sounds on one screen (group, sample, level, pan, effects, cutoff, attack, release, key mode, velocity curve, transpose) plus full pages for Voice, Pitch, Filter, Amp, Range, Mod, LFOs, Envelopes and Tracking, and every drum of a drum kit. Changes go to the QS live (opcode 10, or a full edit-buffer dump for drums and the name). Get/Send the edit buffer, Store to User, open/save .syx. |
+| Record | Records the QS through your audio interface to WAV (16/24-bit). **Auto-sample notes** plays a note range at chosen velocities and saves one file per note. |
+| Device | Pick MIDI in/out, connect, identify the synth (model + OS version). |
+| SysEx Librarian | Record dumps, **Ask QS to Send All**, save/open `.syx`, check a backup is complete (357 parts), send `.syx` back. |
+| Card Tools | Open QCard / QuadraCard / Sound Bridge images, export WAVs or SFZ, test the card slot, read a card over MIDI, write an image to a FLASH card. |
+
+The on-screen keyboard along the bottom plays the QS on the chosen MIDI channel (your computer keys work too).
+
+**QS settings needed:** Global I/O set to MIDI, and Global > MIDI Program Select ON (needed to select and read Preset, GenMIDI and card banks).
+
+The parameter layout comes straight from the Alesis QS SysEx spec (`tools/gen_params.py` generates `core/qs_params_table.inc` from it) and is checked
+against all 640 factory programs. Choices the spec only numbers (key mode, mod sources and destinations, trigger types) show as numbers for now.
 
 Card read/write uses the documented QS SysEx opcodes 11-15 (sector erase / write / request, ACK / NACK).
 The write checksum is "7-bit sum of the previous 1173 bytes"; reading verifies that before anything is written.

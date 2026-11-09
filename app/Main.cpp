@@ -1,6 +1,7 @@
 #include <JuceHeader.h>
 
 #include "MainComponent.h"
+#include "Theme.h"
 
 class QSStudioApplication : public juce::JUCEApplication {
 public:
@@ -8,8 +9,14 @@ public:
     const juce::String getApplicationVersion() override { return ProjectInfo::versionString; }
     bool moreThanOneInstanceAllowed() override { return false; }
 
-    void initialise(const juce::String&) override { window = std::make_unique<MainWindow>(getApplicationName()); }
-    void shutdown() override { window.reset(); }
+    void initialise(const juce::String&) override {
+        juce::LookAndFeel::setDefaultLookAndFeel(&lnf);
+        window = std::make_unique<MainWindow>(getApplicationName());
+    }
+    void shutdown() override {
+        window.reset();
+        juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
+    }
     void systemRequestedQuit() override { quit(); }
 
 private:
@@ -17,7 +24,7 @@ private:
     public:
         explicit MainWindow(const juce::String& name)
             : DocumentWindow(name + "  -  Alesis QS toolkit",
-                             juce::Desktop::getInstance().getDefaultLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId),
+                             theme::bg,
                              DocumentWindow::allButtons) {
             setUsingNativeTitleBar(true);
             setContentOwned(new MainComponent(), true);
@@ -27,6 +34,7 @@ private:
         }
         void closeButtonPressed() override { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
     };
+    theme::LookAndFeel lnf;  // declared before the window so it outlives it
     std::unique_ptr<MainWindow> window;
 };
 

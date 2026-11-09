@@ -3,10 +3,14 @@
 
 #include "../core/qs_card.h"
 #include "MidiLink.h"
+#include "Session.h"
+#include "Theme.h"
+
+class LibraryTab;
+class EditorTab;
 
 // Shared helpers
 juce::String hex(const qs::Bytes& b, size_t maxBytes = 32);
-juce::File settingsDir();
 
 class DeviceTab : public juce::Component, private MidiLink::Listener {
 public:
@@ -74,12 +78,25 @@ private:
     std::unique_ptr<juce::FileChooser> chooser;
 };
 
-class MainComponent : public juce::Component {
+class MainComponent : public juce::Component, private MidiLink::Listener {
 public:
     MainComponent();
+    ~MainComponent() override;
+    void paint(juce::Graphics& g) override;
     void resized() override;
 
 private:
-    MidiLink midi;
+    void sysexReceived(const qs::Bytes& msg) override;
+
+    Session session;  // first: everything below uses it
     juce::TabbedComponent tabs{juce::TabbedButtonBar::TabsAtTop};
+    LibraryTab* library = nullptr;
+    EditorTab* editor = nullptr;
+
+    juce::MidiKeyboardComponent keyboard{session.keys, juce::MidiKeyboardComponent::horizontalKeyboard};
+    juce::Label chLabel{{}, "MIDI ch"}, velLabel{{}, "Velocity"}, statusLabel;
+    juce::ComboBox channelBox;
+    juce::Slider velSlider{juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight};
+    juce::TextButton notesOffBtn{"All notes off"};
+    juce::TooltipWindow tooltips{this, 600};
 };

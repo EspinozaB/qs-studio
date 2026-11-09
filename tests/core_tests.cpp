@@ -6,6 +6,7 @@
 #include <iterator>
 
 #include "../core/qs_card.h"
+#include "../core/qs_program.h"
 #include "../core/qs_sysex.h"
 
 static qs::Bytes readFile(const char* p) {
@@ -44,11 +45,41 @@ int main(int argc, char** argv) {
     rom[1] = 0;
     CHECK(!qs::looksLikeInternalRom(rom));
 
+    // program table and live edit messages
+    CHECK(qs::keyboardParamCount() == 121 && qs::drumParamCount() == 15);
+    const int ff = qs::findKeyboardParam("Filter frequency"), det = qs::findKeyboardParam("Pitch detune");
+    CHECK(ff >= 0 && det >= 0);
+    CHECK(qs::keyboardParam(ff).lowBit == 89 && qs::keyboardParam(ff).bits == 7);   // spec 11:7-11:1
+    CHECK(qs::paramEdit(qs::keyboardParam(ff), 1, 50) == (qs::Bytes{0xF0, 0, 0, 0x0E, 0x0E, 0x10, 0x44, 0x20, 0x00, 0x32, 0xF7}));
+    auto neg = qs::paramEdit(qs::keyboardParam(det), 0, -5);  // func 3 page 0 pot 2, two's complement 0xFB
+    CHECK(neg[6] == 0x43 && neg[7] == 0x00 && neg[8] == ((2 << 1) | 1) && neg[9] == 0x7B);
+    {
+        qs::Program p;
+        p.setName("Test Prog!");
+        CHECK(p.name() == "Test Prog!");
+        p.setValue(2, qs::keyboardParam(det), -42);
+        CHECK(p.value(2, qs::keyboardParam(det)) == -42 && p.value(1, qs::keyboardParam(det)) == -99);
+        p.setValue(2, qs::keyboardParam(ff), 500);  // clamps to the spec limit
+        CHECK(p.value(2, qs::keyboardParam(ff)) == 99);
+        auto back = qs::Program::fromDump(p.editDump());
+        CHECK(back && back->bytes() == p.bytes() && p.editDump().size() == 408);
+    }
+    CHECK(std::string(qs::sampleGroupName(0)) == "Piano" && std::string(qs::sampleGroupName(24)) == "Rhythm");
+
     for (int a = 1; a < argc; ++a) {
         auto raw = readFile(argv[a]);
         std::string s(argv[a]);
         if (s.size() > 4 && (s.substr(s.size() - 4) == ".syx" || s.substr(s.size() - 4) == ".SYX")) {
-            auto sum = qs::summarize(qs::splitSysex(raw));
+            auto msgs = qs::splitSysex(raw);
+            int progs = 0, roundTrip = 0;
+            for (auto& m : msgs)
+                if (auto p = qs::Program::fromDump(m)) {
+                    ++progs;
+                    auto again = qs::Program::fromDump(p->userDump(m[6]));
+                    roundTrip += again && again->bytes() == p->bytes() && p->userDump(m[6]) == m;
+                }
+            CHECK(progs == roundTrip);
+            auto sum = qs::summarize(msgs);
             std::cout << s << ": programs=" << sum.programs << " mixes=" << sum.mixes << " effects=" << sum.effects
                       << " globals=" << sum.globals << " first='" << (sum.programNames.empty() ? "" : sum.programNames[0].second)
                       << "' mix0='" << (sum.mixNames.empty() ? "" : sum.mixNames[0].second) << "'\n";

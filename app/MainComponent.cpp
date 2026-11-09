@@ -1,6 +1,9 @@
 #include "MainComponent.h"
 
 #include "CardJobs.h"
+#include "EditorTab.h"
+#include "LibraryTab.h"
+#include "RecorderTab.h"
 
 // ---------- helpers ----------
 juce::String hex(const qs::Bytes& b, size_t maxBytes) {
@@ -19,7 +22,7 @@ juce::File settingsDir() {
     return d;
 }
 
-static juce::PropertiesFile& settings() {
+juce::PropertiesFile& settings() {
     static juce::PropertiesFile p(settingsDir().getChildFile("QSStudio.settings"), juce::PropertiesFile::Options());
     return p;
 }
@@ -89,7 +92,8 @@ void DeviceTab::connect() {
     settings().setValue("midiOut", outBox.getText());
     settings().saveIfNeeded();
     status.setText("Connected: " + inBox.getText() + " / " + outBox.getText(), juce::dontSendNotification);
-    appendLine(log, "Connected. Click Identify synth to check the link.");
+    appendLine(log, "Connected. Asking the QS to identify itself...");
+    midi.send(qs::deviceInquiry());
 }
 
 void DeviceTab::sysexReceived(const qs::Bytes& msg) {
@@ -437,14 +441,97 @@ void CardTab::resized() {
     info.setBounds(r);
 }
 
-// ---------- Main ----------
+// ---------- Main window ----------
 MainComponent::MainComponent() {
-    const auto bg = getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId);
-    tabs.addTab("Device", bg, new DeviceTab(midi), true);
-    tabs.addTab("SysEx Librarian", bg, new SysexTab(midi), true);
-    tabs.addTab("Card Tools", bg, new CardTab(midi), true);
+    library = new LibraryTab(session);
+    editor = new EditorTab(session);
+    tabs.addTab("Library", theme::bg, library, true);
+    tabs.addTab("Editor", theme::bg, editor, true);
+    tabs.addTab("Record", theme::bg, new RecorderTab(session), true);
+    tabs.addTab("Device", theme::bg, new DeviceTab(session.midi), true);
+    tabs.addTab("SysEx Librarian", theme::bg, new SysexTab(session.midi), true);
+    tabs.addTab("Card Tools", theme::bg, new CardTab(session.midi), true);
+    tabs.setTabBarDepth(44);
+    tabs.setOutline(0);
+    // Not connected yet: start on the Device tab.
+    tabs.setCurrentTabIndex(3);
     addAndMakeVisible(tabs);
-    setSize(900, 620);
+
+    session.openInEditor = [this](const qs::Program& p, const juce::String& where) {
+        editor->openProgram(p, where);
+        tabs.setCurrentTabIndex(1);
+    };
+    session.setStatus = [this](const juce::String& s) { statusLabel.setText(s, juce::dontSendNotification); };
+    session.midi.addListener(this);
+
+    keyboard.setAvailableRange(21, 108);
+    keyboard.setLowestVisibleKey(36);
+    keyboard.setKeyPressBaseOctave(4);
+    keyboard.setScrollButtonWidth(22);
+    addAndMakeVisible(keyboard);
+    for (int ch = 1; ch <= 16; ++ch) channelBox.addItem(juce::String(ch), ch);
+    channelBox.setSelectedId(session.channel, juce::dontSendNotification);
+    channelBox.setTooltip("The MIDI channel the QS listens on in Program mode");
+    channelBox.onChange = [this] {
+        session.setChannel(channelBox.getSelectedId());
+        library->refresh();
+    };
+    velSlider.setRange(1, 127, 1);
+    velSlider.setValue(settings().getIntValue("keyVelocity", 100), juce::dontSendNotification);
+    velSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 44, 24);
+    auto applyVel = [this] {
+        keyboard.setVelocity(float(velSlider.getValue()) / 127.0f, false);
+        settings().setValue("keyVelocity", int(velSlider.getValue()));
+    };
+    velSlider.onValueChange = applyVel;
+    applyVel();
+    notesOffBtn.onClick = [this] { session.allNotesOff(); };
+    statusLabel.setColour(juce::Label::textColourId, theme::dim);
+    statusLabel.setFont(theme::uiFont(13.0f));
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&chLabel, &velLabel, &channelBox, &velSlider, &notesOffBtn, &statusLabel})
+        addAndMakeVisible(c);
+    for (auto* l : {&chLabel, &velLabel}) {
+        l->setColour(juce::Label::textColourId, theme::dim);
+        l->setFont(theme::uiFont(13.0f, true));
+    }
+    setSize(1360, 920);
 }
 
-void MainComponent::resized() { tabs.setBounds(getLocalBounds()); }
+MainComponent::~MainComponent() {
+    session.midi.removeListener(this);
+    session.openInEditor = nullptr;
+    session.setStatus = nullptr;
+}
+
+void MainComponent::sysexReceived(const qs::Bytes& msg) {
+    if (auto d = qs::parseDeviceReply(msg)) {
+        session.deviceName = juce::String(d->model) + " v" + juce::String(d->version);
+        statusLabel.setText("Connected to " + session.deviceName, juce::dontSendNotification);
+        library->refresh();
+    }
+}
+
+void MainComponent::paint(juce::Graphics& g) {
+    g.fillAll(theme::bg);
+    g.setColour(theme::panel);
+    g.fillRect(getLocalBounds().removeFromBottom(150));
+}
+
+void MainComponent::resized() {
+    auto r = getLocalBounds();
+    auto bottom = r.removeFromBottom(150).reduced(12, 8);
+    auto bar = bottom.removeFromTop(30);
+    chLabel.setBounds(bar.removeFromLeft(60));
+    channelBox.setBounds(bar.removeFromLeft(64).reduced(0, 2));
+    bar.removeFromLeft(16);
+    velLabel.setBounds(bar.removeFromLeft(64));
+    velSlider.setBounds(bar.removeFromLeft(220));
+    bar.removeFromLeft(16);
+    notesOffBtn.setBounds(bar.removeFromLeft(120).reduced(0, 1));
+    bar.removeFromLeft(16);
+    statusLabel.setBounds(bar);
+    bottom.removeFromTop(6);
+    keyboard.setBounds(bottom);
+    keyboard.setKeyWidth(juce::jmax(14.0f, float(bottom.getWidth() - 44) / 52.0f));  // about 52 white keys in view
+    tabs.setBounds(r);
+}

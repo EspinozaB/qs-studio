@@ -38,14 +38,21 @@ public:
     void close() {
         if (input) input->stop();
         input.reset();
+        const juce::ScopedLock sl(outLock);
         output.reset();
     }
 
     bool isOpen() const { return input != nullptr && output != nullptr; }
 
     void send(const qs::Bytes& m) {
-        if (output == nullptr || m.size() < 2 || m.front() != 0xF0 || m.back() != 0xF7) return;
-        output->sendMessageNow(juce::MidiMessage::createSysExMessage(m.data() + 1, int(m.size()) - 2));
+        if (m.size() < 2 || m.front() != 0xF0 || m.back() != 0xF7) return;
+        sendMidi(juce::MidiMessage::createSysExMessage(m.data() + 1, int(m.size()) - 2));
+    }
+
+    // Notes, controllers, program changes. Safe from any thread.
+    void sendMidi(const juce::MidiMessage& m) {
+        const juce::ScopedLock sl(outLock);
+        if (output != nullptr) output->sendMessageNow(m);
     }
 
     // Seconds needed on a 31.25 kbaud MIDI wire for n bytes (10 bits per byte).
@@ -96,7 +103,7 @@ private:
 
     std::unique_ptr<juce::MidiInput> input;
     std::unique_ptr<juce::MidiOutput> output;
-    juce::CriticalSection lock;
+    juce::CriticalSection lock, outLock;
     std::deque<qs::Bytes> queue;
     juce::WaitableEvent arrived;
     juce::ListenerList<Listener> listeners;

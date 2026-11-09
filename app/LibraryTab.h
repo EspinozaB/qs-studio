@@ -1,0 +1,51 @@
+// Library: browse every bank and program, select them on the QS, read names from the QS, open in the editor.
+#pragma once
+#include <JuceHeader.h>
+
+#include "Session.h"
+#include "Theme.h"
+
+class LibraryTab : public juce::Component, private juce::ListBoxModel, private juce::Timer {
+public:
+    explicit LibraryTab(Session& s);
+    ~LibraryTab() override;
+    void paint(juce::Graphics& g) override;
+    void resized() override;
+    bool keyPressed(const juce::KeyPress& k) override;
+
+    void showBank(int bank);
+    void refresh();
+
+private:
+    // ListBoxModel
+    int getNumRows() override { return int(rows.size()); }
+    void paintListBoxItem(int row, juce::Graphics& g, int w, int h, bool selected) override;
+    void selectedRowsChanged(int row) override;
+    void listBoxItemDoubleClicked(int row, const juce::MouseEvent&) override;
+    void timerCallback() override;
+
+    void rebuildRows();
+    void updateLcd();
+    int selectedProgram() const;
+    void readBank();
+    void loadSyxIntoBank();
+    void openInEditor(int prog);
+    void sendCachedToEditBuffer();
+    void storeToUser();
+    void step(int delta);
+
+    Session& session;
+    int bank = 0;
+    std::vector<int> rows;  // program numbers shown (after search)
+    int pendingSelect = -1;
+    bool suppressSend = false;
+
+    theme::Lcd lcd;
+    juce::OwnedArray<juce::TextButton> bankButtons;
+    juce::TextEditor search;
+    juce::ListBox list{"programs", this};
+    juce::TextButton prevBtn{"<"}, nextBtn{">"}, readBtn{"Read bank from QS"}, loadBtn{"Load .syx into bank"},
+        editBtn{"Open in editor"}, sendBtn{"Send to QS edit buffer"}, storeBtn{"Store to User..."};
+    juce::Label hint;
+    std::unique_ptr<juce::FileChooser> chooser;
+};
