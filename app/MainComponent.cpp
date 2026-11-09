@@ -47,7 +47,7 @@ static qs::Bytes toBytes(const juce::MemoryBlock& mb) {
 
 // ---------- Device ----------
 DeviceTab::DeviceTab(MidiLink& m) : midi(m) {
-    for (auto* c : {(juce::Component*)&inLabel, &outLabel, &status, &inBox, &outBox, &refreshBtn, &connectBtn, &identifyBtn, &log})
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&inLabel, &outLabel, &status, &inBox, &outBox, &refreshBtn, &connectBtn, &identifyBtn, &log})
         addAndMakeVisible(c);
     setupLog(log);
     status.setText("Not connected", juce::dontSendNotification);
@@ -122,7 +122,7 @@ void DeviceTab::resized() {
 
 // ---------- SysEx librarian ----------
 SysexTab::SysexTab(MidiLink& m) : midi(m) {
-    for (auto* c : {(juce::Component*)&recBtn, &stopBtn, &saveBtn, &requestBtn, &loadBtn, &sendBtn, &countLabel, &help, &summary})
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&recBtn, &stopBtn, &saveBtn, &requestBtn, &loadBtn, &sendBtn, &countLabel, &help, &summary})
         addAndMakeVisible(c);
     setupLog(summary);
     help.setText("Record, then on the QS press STORE, PAGE up 4 times, STORE (\"SEND ALL DATA TO MIDI\"). "
@@ -252,7 +252,7 @@ void SysexTab::resized() {
 
 // ---------- Card tools ----------
 CardTab::CardTab(MidiLink& m) : midi(m) {
-    for (auto* c : {(juce::Component*)&openBtn, &wavBtn, &sfzBtn, &testBtn, &readBtn, &writeBtn, &sizeBox, &sizeLabel, &info})
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&openBtn, &wavBtn, &sfzBtn, &testBtn, &readBtn, &writeBtn, &sizeBox, &sizeLabel, &info})
         addAndMakeVisible(c);
     setupLog(info);
     sizeBox.addItem("512 KB (RAM512)", 4);
