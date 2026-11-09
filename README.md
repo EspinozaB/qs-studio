@@ -16,7 +16,8 @@ The write checksum is "7-bit sum of the previous 1173 bytes"; reading verifies t
 
 ## Building
 
-GitHub Actions builds it on every push: open the latest run under **Actions** and download **QS-Studio-windows**.
+**Download:** grab `QS-Studio.exe` from the [latest build release](https://github.com/EspinozaB/qs-studio/releases/tag/latest). It is rebuilt on every push to `main`.
+The exe is not code-signed, so Windows SmartScreen will warn the first time: click **More info**, then **Run anyway**.
 Locally: `cmake -B build && cmake --build build --config Release` (fetches JUCE 8).
 
 Core tests (no JUCE): `cmake -B build -DQS_BUILD_APP=OFF && cmake --build build && ctest --test-dir build`

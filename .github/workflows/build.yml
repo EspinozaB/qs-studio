@@ -13,6 +13,8 @@ jobs:
 
   windows:
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: Configure
@@ -28,3 +30,13 @@ jobs:
         with:
           name: QS-Studio-windows
           path: out/
+      - name: Publish to the "latest" prerelease (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Copy-Item "out/QS Studio.exe" "out/QS-Studio.exe"
+          gh release delete latest --cleanup-tag -y 2>$null
+          $notes = "Automatic build of main at $($env:GITHUB_SHA.Substring(0,7)). Untested on hardware; use at your own risk."
+          gh release create latest "out/QS-Studio.exe" --prerelease --target $env:GITHUB_SHA --title "QS Studio (latest build)" --notes $notes
