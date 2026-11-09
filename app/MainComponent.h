@@ -4,6 +4,7 @@
 #include "../core/qs_card.h"
 #include "MidiLink.h"
 #include "Session.h"
+#include "PerformanceControls.h"
 #include "Theme.h"
 
 class LibraryTab;
@@ -94,6 +95,7 @@ private:
     EditorTab* editor = nullptr;
 
     juce::MidiKeyboardComponent keyboard{session.keys, juce::MidiKeyboardComponent::horizontalKeyboard};
+    PerformanceControls perf{session};
     juce::Label chLabel{{}, "MIDI ch"}, velLabel{{}, "Velocity"}, statusLabel;
     juce::ComboBox channelBox;
     juce::Slider velSlider{juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight};

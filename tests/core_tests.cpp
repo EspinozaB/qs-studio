@@ -79,6 +79,12 @@ int main(int argc, char** argv) {
                     roundTrip += again && again->bytes() == p->bytes() && p->userDump(m[6]) == m;
                 }
             CHECK(progs == roundTrip);
+            for (auto& m : msgs)
+                if (auto gs = qs::parseGlobalDump(m)) {
+                    std::printf("    global: controllers A-D CC %d %d %d %d, program select %d\n", gs->controller[0], gs->controller[1],
+                                gs->controller[2], gs->controller[3], gs->programSelect);
+                    CHECK(gs->controller[2] == 91 && gs->programSelect == 1);
+                }
             auto sum = qs::summarize(msgs);
             std::cout << s << ": programs=" << sum.programs << " mixes=" << sum.mixes << " effects=" << sum.effects
                       << " globals=" << sum.globals << " first='" << (sum.programNames.empty() ? "" : sum.programNames[0].second)

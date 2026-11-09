@@ -67,6 +67,16 @@ private:
 Bytes paramEdit(int mode, int func, int soundOrBus, int page, int channel, int pot, int value);
 Bytes paramEdit(const ParamDef& p, int sound, int value);  // Program mode, channel 0
 
+// Global settings (opcode 0A, 20 bytes, one parameter per byte, signed values in two's complement).
+struct GlobalSettings {
+    int controller[4] = {12, 13, 91, 93};  // Controller A-D MIDI CC numbers (factory defaults)
+    int pedal[2] = {7, 4};
+    int programSelect = 1;                 // 0 = Off, 1 = On, 2-17 = on one channel only
+    bool generalMidi = false;
+};
+std::optional<GlobalSettings> parseGlobalDump(const Bytes& msg);
+Bytes globalRequest();
+
 Bytes editProgramRequest(int editNumber = 0);  // opcode 03
 Bytes modeSelect(int mode);                    // opcode 0D: 0 Program, 1 Mix
 

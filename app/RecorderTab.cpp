@@ -54,8 +54,16 @@ void AudioRecorder::audioDeviceIOCallbackWithContext(const float* const* in, int
             written += n;
         }
     }
-    for (int c = 0; c < numOut; ++c)
-        if (out[c] != nullptr) juce::FloatVectorOperations::clear(out[c], n);
+    // Live monitoring: input straight to the first two outputs.
+    const bool mon = monitor.load() && l != nullptr;
+    const float gain = monitorGain.load();
+    int outIdx = 0;
+    for (int c = 0; c < numOut; ++c) {
+        if (out[c] == nullptr) continue;
+        if (mon && outIdx < 2) juce::FloatVectorOperations::multiply(out[c], outIdx == 0 ? l : r, gain, n);
+        else juce::FloatVectorOperations::clear(out[c], n);
+        ++outIdx;
+    }
 }
 
 // ---------------- Auto-sampler ----------------
@@ -116,9 +124,9 @@ private:
 
 RecorderTab::RecorderTab(Session& s) : session(s) {
     std::unique_ptr<juce::XmlElement> state(juce::parseXML(settings().getValue("audioState")));
-    devices.initialise(2, 0, state.get(), true);
+    devices.initialise(2, 2, state.get(), true);
     devices.addAudioCallback(&recorder);
-    selector = std::make_unique<juce::AudioDeviceSelectorComponent>(devices, 1, 2, 0, 0, false, false, true, true);
+    selector = std::make_unique<juce::AudioDeviceSelectorComponent>(devices, 1, 2, 0, 2, false, false, true, false);
     addAndMakeVisible(*selector);
     addAndMakeVisible(lcd);
 
@@ -161,6 +169,23 @@ RecorderTab::RecorderTab(Session& s) : session(s) {
         auto n = session.library.nameOf(session.currentBank, session.currentProgram);
         if (n.isNotEmpty()) prefix.setText(n.removeCharacters(" "), true);
     };
+    monitorToggle.setToggleState(settings().getBoolValue("recMonitor", false), juce::dontSendNotification);
+    recorder.monitor = monitorToggle.getToggleState();
+    monitorToggle.setTooltip("Plays the inputs through the output device so you can hear the QS without a DAW. Use headphones if a mic is involved.");
+    monitorToggle.onClick = [this] {
+        recorder.monitor = monitorToggle.getToggleState();
+        settings().setValue("recMonitor", monitorToggle.getToggleState());
+    };
+    monitorLevel.setRange(0.0, 1.0, 0.01);
+    monitorLevel.setValue(settings().getDoubleValue("recMonitorLevel", 0.7), juce::dontSendNotification);
+    recorder.monitorGain = float(monitorLevel.getValue());
+    monitorLevel.onValueChange = [this] {
+        recorder.monitorGain = float(monitorLevel.getValue());
+        settings().setValue("recMonitorLevel", monitorLevel.getValue());
+    };
+    monitorLevel.setTooltip("Monitor level");
+    addAndMakeVisible(monitorToggle);
+    addAndMakeVisible(monitorLevel);
     startTimerHz(20);
 }
 
@@ -262,7 +287,8 @@ void RecorderTab::timerCallback() {
     } else if (recorder.isRecording()) {
         lines.add("RECORDING  " + juce::String(recorder.seconds(), 1) + " s");
     } else {
-        lines.add(recorder.rate() > 0 ? "READY  " + juce::String(int(recorder.rate())) + " Hz" : "NO AUDIO INPUT");
+        lines.add(recorder.rate() > 0 ? "READY  " + juce::String(int(recorder.rate())) + " Hz" + (recorder.monitor.load() ? "   MONITORING" : "")
+                                      : "NO AUDIO DEVICE: pick one on the left");
     }
     lcd.setLines(sampler || recorder.isRecording() ? juce::String("REC") : juce::String("Record"), lines);
     recBtn.setButtonText(recorder.isRecording() && !sampler ? "Stop" : "Record");
@@ -295,7 +321,11 @@ void RecorderTab::resized() {
     lcd.setBounds(r.removeFromTop(110));
     r.removeFromTop(8);
     meterArea = r.removeFromTop(30);
-    r.removeFromTop(14);
+    r.removeFromTop(10);
+    auto mon = r.removeFromTop(30);
+    monitorToggle.setBounds(mon.removeFromLeft(230));
+    monitorLevel.setBounds(mon.removeFromLeft(220));
+    r.removeFromTop(10);
     auto row = [&r](int h = 30) { auto x = r.removeFromTop(h); r.removeFromTop(8); return x; };
     auto labelled = [](juce::Rectangle<int> rr, juce::Label& l, juce::Component& c) {
         l.setBounds(rr.removeFromLeft(130));

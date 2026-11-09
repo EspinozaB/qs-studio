@@ -125,6 +125,20 @@ Bytes paramEdit(int mode, int func, int sound, int page, int channel, int pot, i
 
 Bytes paramEdit(const ParamDef& p, int sound, int value) { return paramEdit(2, p.func, sound, p.page, 0, p.pot, value); }
 
+std::optional<GlobalSettings> parseGlobalDump(const Bytes& m) {
+    if (opcodeOf(m) != GlobalDump || m.size() < 8 + packedSize(20)) return std::nullopt;
+    const auto g = unpack7(&m[7], packedSize(20), 20);
+    GlobalSettings s;
+    for (int i = 0; i < 4; ++i) s.controller[i] = g[size_t(7 + i)] & 0x7F;
+    s.pedal[0] = g[11] & 0x7F;
+    s.pedal[1] = g[12] & 0x7F;
+    s.programSelect = g[13] & 0x1F;
+    s.generalMidi = (g[17] & 1) != 0;
+    return s;
+}
+
+Bytes globalRequest() { return {0xF0, 0x00, 0x00, 0x0E, kQsFamily, GlobalRequest, 0xF7}; }
+
 Bytes editProgramRequest(int n) { return {0xF0, 0x00, 0x00, 0x0E, kQsFamily, EditProgramRequest, uint8_t(n & 0x7F), 0xF7}; }
 Bytes modeSelect(int mode) { return {0xF0, 0x00, 0x00, 0x0E, kQsFamily, ModeSelect, uint8_t(mode & 1), 0xF7}; }
 

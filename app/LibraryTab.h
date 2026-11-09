@@ -29,6 +29,7 @@ private:
     int selectedProgram() const;
     void readBank();
     void loadSyxIntoBank();
+    void loadFactoryBanks();
     void openInEditor(int prog);
     void sendCachedToEditBuffer();
     void storeToUser();
@@ -45,7 +46,10 @@ private:
     juce::TextEditor search;
     juce::ListBox list{"programs", this};
     juce::TextButton prevBtn{"<"}, nextBtn{">"}, readBtn{"Read bank from QS"}, loadBtn{"Load .syx into bank"},
-        editBtn{"Open in editor"}, sendBtn{"Send to QS edit buffer"}, storeBtn{"Store to User..."};
-    juce::Label hint;
+        editBtn{"Open in editor"}, sendBtn{"Send to QS edit buffer"}, storeBtn{"Store to User..."},
+        factoryBtn{"Load factory banks..."};
+    juce::HyperlinkButton factoryLink{"Where to get the factory banks",
+                                      juce::URL("https://github.com/jzemeocala/Alesis-Archive-Project/tree/HEAD/BANKS/FACTORY")};
+    juce::Label hint, sourceLabel;
     std::unique_ptr<juce::FileChooser> chooser;
 };

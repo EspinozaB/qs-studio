@@ -488,7 +488,7 @@ MainComponent::MainComponent() {
     notesOffBtn.onClick = [this] { session.allNotesOff(); };
     statusLabel.setColour(juce::Label::textColourId, theme::dim);
     statusLabel.setFont(theme::uiFont(13.0f));
-    for (juce::Component* c : std::initializer_list<juce::Component*>{&chLabel, &velLabel, &channelBox, &velSlider, &notesOffBtn, &statusLabel})
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&chLabel, &velLabel, &channelBox, &velSlider, &notesOffBtn, &statusLabel, &perf})
         addAndMakeVisible(c);
     for (auto* l : {&chLabel, &velLabel}) {
         l->setColour(juce::Label::textColourId, theme::dim);
@@ -507,7 +507,23 @@ void MainComponent::sysexReceived(const qs::Bytes& msg) {
     if (auto d = qs::parseDeviceReply(msg)) {
         session.deviceName = juce::String(d->model) + " v" + juce::String(d->version);
         statusLabel.setText("Connected to " + session.deviceName, juce::dontSendNotification);
+        // Factory names for empty Preset/GenMIDI banks, if the user pointed us at the factory files before.
+        const juce::File factory(settings().getValue("factoryFolder"));
+        if (factory.isDirectory()) session.library.loadFactoryFolder(factory, true);
         library->refresh();
+        perf.updateLayout();
+        resized();
+        session.midi.send(qs::globalRequest());  // controller numbers and Program Select
+        return;
+    }
+    if (auto g = qs::parseGlobalDump(msg)) {
+        session.global = *g;
+        session.globalKnown = true;
+        perf.updateLayout();
+        if (g->programSelect == 0)
+            statusLabel.setText("Connected to " + session.deviceName +
+                                    ". Global > MIDI Program Select is OFF: the QS will ignore program changes from QS Studio. Set it to ON.",
+                                juce::dontSendNotification);
     }
 }
 
@@ -531,6 +547,8 @@ void MainComponent::resized() {
     bar.removeFromLeft(16);
     statusLabel.setBounds(bar);
     bottom.removeFromTop(6);
+    perf.setBounds(bottom.removeFromLeft(perf.preferredWidth()));
+    bottom.removeFromLeft(8);
     keyboard.setBounds(bottom);
     keyboard.setKeyWidth(juce::jmax(14.0f, float(bottom.getWidth() - 44) / 52.0f));  // about 52 white keys in view
     tabs.setBounds(r);

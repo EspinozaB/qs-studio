@@ -9,12 +9,18 @@ settings are saved next to the exe (`QSStudio.settings`).
 |---|---|
 | Library | Every bank (User, Preset 1-3, GenMIDI, Card A/B) with program names and search. Click or arrow through programs to select them on the QS; double-click to edit. **Read bank from QS** fills in names once; they are cached in `QSStudio.library` next to the exe. Load a .syx into a bank, send a program to the edit buffer, or store it to a User slot. |
 | Editor | All four sounds on one screen (group, sample, level, pan, effects, cutoff, attack, release, key mode, velocity curve, transpose) plus full pages for Voice, Pitch, Filter, Amp, Range, Mod, LFOs, Envelopes and Tracking, and every drum of a drum kit. Changes go to the QS live (opcode 10, or a full edit-buffer dump for drums and the name). Get/Send the edit buffer, Store to User, open/save .syx. |
-| Record | Records the QS through your audio interface to WAV (16/24-bit). **Auto-sample notes** plays a note range at chosen velocities and saves one file per note. |
+| Record | Records the QS through your audio interface to WAV (16/24-bit), with live monitoring so you can hear the inputs without a DAW. **Auto-sample notes** plays a note range at chosen velocities and saves one file per note. |
 | Device | Pick MIDI in/out, connect, identify the synth (model + OS version). |
 | SysEx Librarian | Record dumps, **Ask QS to Send All**, save/open `.syx`, check a backup is complete (357 parts), send `.syx` back. |
 | Card Tools | Open QCard / QuadraCard / Sound Bridge images, export WAVs or SFZ, test the card slot, read a card over MIDI, write an image to a FLASH card. |
 
-The on-screen keyboard along the bottom plays the QS on the chosen MIDI channel (your computer keys work too).
+The bar along the bottom plays the QS on the chosen MIDI channel: keyboard (your computer keys work too), pitch wheel, mod wheel,
+Controller A (A-D on models with four sliders) and volume. Controller numbers are read from the QS Global settings after Identify.
+
+**Factory names without reading every bank:** Library > **Load factory banks...** and pick a folder with the Alesis factory `.syx` files
+(`Q678PST1`-`Q678PST4`, from the [Alesis Archive Project](https://github.com/jzemeocala/Alesis-Archive-Project/tree/HEAD/BANKS/FACTORY)).
+They fill Preset 1-3 and GenMIDI and are re-used automatically. They are factory data: if a bank on your QS differs, read it from the QS.
+No Alesis data ships with QS Studio.
 
 **QS settings needed:** Global I/O set to MIDI, and Global > MIDI Program Select ON (needed to select and read Preset, GenMIDI and card banks).
 

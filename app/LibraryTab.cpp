@@ -55,8 +55,15 @@ public:
     }
 
     void threadComplete(bool) override {
+        int got = 0;
         for (size_t p = 0; p < 128; ++p)
-            if (read[p]) session.library.programs[size_t(bank)][p] = read[p];
+            if (read[p]) {
+                session.library.programs[size_t(bank)][p] = read[p];
+                ++got;
+            }
+        if (got > 0)
+            session.library.source[size_t(bank)] = "your " + (session.deviceName.isNotEmpty() ? session.deviceName : juce::String("QS")) +
+                                                   " (read " + juce::Time::getCurrentTime().formatted("%Y-%m-%d") + ")";
         session.library.save();
         if (onDone) onDone(result);
         delete this;
@@ -91,8 +98,15 @@ LibraryTab::LibraryTab(Session& s) : session(s) {
     list.setWantsKeyboardFocus(true);
     addAndMakeVisible(list);
 
-    for (juce::Component* c : std::initializer_list<juce::Component*>{&prevBtn, &nextBtn, &readBtn, &loadBtn, &editBtn, &sendBtn, &storeBtn, &hint})
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&prevBtn, &nextBtn, &readBtn, &loadBtn, &editBtn, &sendBtn, &storeBtn,
+                                                                    &factoryBtn, &factoryLink, &hint, &sourceLabel})
         addAndMakeVisible(c);
+    factoryBtn.onClick = [this] { loadFactoryBanks(); };
+    factoryBtn.setTooltip("Pick the folder with the Alesis factory .syx files (Q678PST1-4). Fills Preset 1-3 and GenMIDI names instantly.");
+    factoryLink.setColour(juce::HyperlinkButton::textColourId, theme::accent);
+    factoryLink.setFont(theme::uiFont(13.0f), false, juce::Justification::centredLeft);
+    sourceLabel.setFont(theme::uiFont(13.0f));
+    sourceLabel.setColour(juce::Label::textColourId, theme::dim);
     prevBtn.onClick = [this] { step(-1); };
     nextBtn.onClick = [this] { step(1); };
     readBtn.onClick = [this] { readBank(); };
@@ -146,6 +160,35 @@ void LibraryTab::rebuildRows() {
     suppressSend = false;
     const int n = session.library.countRead(bank);
     readBtn.setButtonText(n == 0 ? "Read bank from QS" : "Re-read bank from QS");
+    const auto& src = session.library.source[size_t(bank)];
+    if (n == 0)
+        sourceLabel.setText("No names yet. Read this bank from the QS" + juce::String(bank >= 1 && bank <= 4 ? ", or load the factory banks." : "."),
+                            juce::dontSendNotification);
+    else if (session.library.isFactorySource(bank))
+        sourceLabel.setText("Names from " + src.fromFirstOccurrenceOf("Factory file ", false, false) +
+                                ". These are the factory programs; if this bank was changed on your QS (or it's a different model), "
+                                "Re-read bank from QS to be sure.",
+                            juce::dontSendNotification);
+    else
+        sourceLabel.setText(src.isNotEmpty() ? "Names from " + src + "." : juce::String(n) + " of 128 programs known.", juce::dontSendNotification);
+}
+
+void LibraryTab::loadFactoryBanks() {
+    chooser = std::make_unique<juce::FileChooser>("Folder with the Alesis factory bank .syx files (Q678PST1-4)",
+                                                  juce::File(settings().getValue("factoryFolder", settingsDir().getFullPathName())));
+    chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories, [this](const juce::FileChooser& fc) {
+        auto dir = fc.getResult();
+        if (!dir.isDirectory()) return;
+        const int n = session.library.loadFactoryFolder(dir, false);
+        if (n == 0) {
+            alert("No factory banks found", "That folder has no .syx files with PST1, PST2, PST3 or PST4 in the name.");
+            return;
+        }
+        settings().setValue("factoryFolder", dir.getFullPathName());
+        settings().saveIfNeeded();
+        refresh();
+        if (session.setStatus) session.setStatus("Loaded " + juce::String(n) + " factory banks. They'll fill empty banks automatically next time.");
+    });
 }
 
 void LibraryTab::updateLcd() {
@@ -249,6 +292,7 @@ void LibraryTab::loadSyxIntoBank() {
                     ++n;
                 }
         if (n == 0) { alert("No programs", f.getFileName() + " has no QS program dumps."); return; }
+        session.library.source[size_t(bank)] = f.getFileName();
         session.library.save();
         refresh();
         if (session.setStatus) session.setStatus("Loaded " + juce::String(n) + " program names from " + f.getFileName());
@@ -334,11 +378,14 @@ void LibraryTab::resized() {
     searchRow.removeFromRight(10);
     search.setBounds(searchRow);
     r.removeFromTop(8);
+    sourceLabel.setBounds(r.removeFromBottom(36));
+    r.removeFromBottom(4);
     list.setBounds(r);
-    for (auto* b : {&readBtn, &loadBtn, &editBtn, &sendBtn, &storeBtn}) {
+    for (auto* b : {&readBtn, &factoryBtn, &loadBtn, &editBtn, &sendBtn, &storeBtn}) {
         b->setBounds(right.removeFromTop(36));
         right.removeFromTop(8);
     }
+    factoryLink.setBounds(right.removeFromTop(22));
     right.removeFromTop(10);
     hint.setBounds(right);
 }

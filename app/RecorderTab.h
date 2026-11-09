@@ -18,6 +18,8 @@ public:
     double seconds() const { return sampleRate > 0 ? double(written.load()) / sampleRate : 0.0; }
     float takePeak(int ch) { return (ch == 0 ? peakL : peakR).exchange(0.0f); }
     double rate() const { return sampleRate; }
+    std::atomic<bool> monitor{false};
+    std::atomic<float> monitorGain{0.7f};
 
     void audioDeviceIOCallbackWithContext(const float* const* in, int numIn, float* const* out, int numOut, int n,
                                           const juce::AudioIODeviceCallbackContext&) override;
@@ -66,6 +68,8 @@ private:
     juce::ComboBox bits;
     juce::TextButton recBtn{"Record"}, autoBtn{"Auto-sample notes"}, folderBtn{"Open recordings folder"}, nameFromProgBtn{"Use program name"};
     juce::Label status;
+    juce::ToggleButton monitorToggle{"Monitor (hear the inputs)"};
+    juce::Slider monitorLevel{juce::Slider::LinearHorizontal, juce::Slider::NoTextBox};
     float meterL = 0, meterR = 0;
     juce::Rectangle<int> meterArea;
 };
