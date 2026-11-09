@@ -39,3 +39,8 @@ See `core/qs_card.cpp`. Summary:
 2. Editor (programs, mixes, effects, global; live editing with opcode 10)
 3. QS player VST3 / standalone using your own card images and decoded programs
 4. 1:1 emulation core (needs the firmware EPROM dump and the sound/effects ASICs emulated)
+
+## Thanks
+
+- [Project Q](https://github.com/brianpeat/project-q) (Brian Peat) for published findings used here: the QuadraSynth Plus Piano,
+  QS6.1 and QS8.1 device inquiry codes, and that some units answer card reads with their built-in sound ROM. No code is copied.

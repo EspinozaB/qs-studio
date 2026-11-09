@@ -36,6 +36,13 @@ int main(int argc, char** argv) {
     qs::Bytes rep{0xF0, 0x7E, 0x7F, 0x06, 0x02, 0, 0, 0x0E, 0x0E, 0, 0x03, 0, '0', '2', '0', '0', 0xF7};
     auto di = qs::parseDeviceReply(rep);
     CHECK(di && di->model == "QS6" && di->version == "2.00");
+    rep[10] = 0x0F;
+    CHECK(qs::parseDeviceReply(rep)->model == "QS8.1");
+    qs::Bytes rom(1024, 0);
+    rom[1] = 0x80; rom[8] = 'R'; rom[9] = 'O'; rom[10] = 'M';
+    CHECK(qs::looksLikeInternalRom(rom));
+    rom[1] = 0;
+    CHECK(!qs::looksLikeInternalRom(rom));
 
     for (int a = 1; a < argc; ++a) {
         auto raw = readFile(argv[a]);

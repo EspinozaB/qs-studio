@@ -75,4 +75,12 @@ struct DumpSummary {
 };
 DumpSummary summarize(const std::vector<Bytes>& msgs);
 
+// A complete Send All (opcode 0C): 128 programs + 100 mixes + 128 effects + 1 global.
+constexpr int kFullBackupMessages = 357;
+bool isCompleteBackup(const DumpSummary& s);
+
+// Some QS units answer a card read (opcode 13) with their built-in sound ROM instead of the card.
+// That block starts 00 80 00 00 and has "ROM" in its header text (observed by Project Q, github.com/brianpeat/project-q).
+bool looksLikeInternalRom(const Bytes& block);
+
 }  // namespace qs

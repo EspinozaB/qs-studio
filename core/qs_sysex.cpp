@@ -115,7 +115,7 @@ std::optional<DeviceInfo> parseDeviceReply(const Bytes& m) {
     DeviceInfo d;
     d.family = m[8] | (m[9] << 7);
     d.member = m[10] | (m[11] << 7);
-    static const std::map<int, std::string> names = {{3, "QS6"}, {4, "QS8"}, {5, "QS7"}, {6, "QSR"}};
+    static const std::map<int, std::string> names = {{1, "QuadraSynth Plus Piano"}, {3, "QS6"}, {4, "QS8"}, {5, "QS7"}, {6, "QSR"}, {13, "QS6.1"}, {15, "QS8.1"}};
     auto it = names.find(d.member);
     d.model = d.family == 0x0E ? (it != names.end() ? it->second : "QS (member " + std::to_string(d.member) + ")")
                                : "Alesis device family " + std::to_string(d.family);
@@ -192,6 +192,16 @@ DumpSummary summarize(const std::vector<Bytes>& msgs) {
         }
     }
     return s;
+}
+
+bool isCompleteBackup(const DumpSummary& s) {
+    return s.programs == 128 && s.mixes + s.oldMixes == 100 && s.effects == 128 && s.globals == 1;
+}
+
+bool looksLikeInternalRom(const Bytes& b) {
+    if (b.size() < 32 || b[0] != 0x00 || b[1] != 0x80 || b[2] != 0x00 || b[3] != 0x00) return false;
+    const std::string head(b.begin(), b.begin() + 32);
+    return head.find("ROM") != std::string::npos;
 }
 
 }  // namespace qs

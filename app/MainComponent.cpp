@@ -175,6 +175,11 @@ void SysexTab::updateSummary(const std::vector<qs::Bytes>& msgs, const juce::Str
     appendLine(summary, title + ": " + juce::String(int(msgs.size())) + " messages");
     appendLine(summary, "Programs " + juce::String(s.programs) + ", Mixes " + juce::String(s.mixes + s.oldMixes) + ", Effects " +
                             juce::String(s.effects) + ", Global " + juce::String(s.globals) + ", Other " + juce::String(s.other));
+    if (s.programs + s.mixes + s.oldMixes + s.effects + s.globals > 0)
+        appendLine(summary, qs::isCompleteBackup(s)
+                                ? juce::String("Complete backup (all 357 parts).")
+                                : "INCOMPLETE: a full Send All is 128 programs, 100 mixes, 128 effects and 1 global (357 parts). "
+                                  "Record again before relying on this file.");
     if (!s.programNames.empty()) {
         appendLine(summary, "\nPROGRAMS");
         for (auto& [n, name] : s.programNames) appendLine(summary, juce::String(n).paddedLeft('0', 3) + "  " + juce::String(name));
@@ -352,7 +357,11 @@ void CardTab::testReader() {
             case cardjobs::BlockResult::BadChecksum:
                 msg = "< Got 1 KB. Checksum " + juce::String(r.kind == cardjobs::BlockResult::Ok ? "OK" : "MISMATCH") +
                       ".\n  First bytes: " + hex(r.data, 16) + "\n  " +
-                      (qs::looksLikeCard(r.data) ? "That's a QS sound card header. The reader works." :
+                      (qs::looksLikeInternalRom(r.data)
+                           ? "This is NOT the card. Your QS answered with its built-in sound ROM. Card reads on this unit "
+                             "return internal memory, so Read card will save the internal ROM, not the card. "
+                             "Please send this result to the QS Studio issue tracker." :
+                       qs::looksLikeCard(r.data) ? "That's a QS sound card header. The reader works." :
                        "Not a sample-card header (RAM program cards and blank FLASH look different). The reader works.");
                 break;
             case cardjobs::BlockResult::Nack:

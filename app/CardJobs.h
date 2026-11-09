@@ -79,8 +79,10 @@ public:
             }
         if (image.empty()) { result = "Cancelled."; return; }
         file.replaceWithData(image.data(), image.size());
+        const bool internalRom = image.size() >= 1024 && qs::looksLikeInternalRom(qs::Bytes(image.begin(), image.begin() + 1024));
         result = "Saved " + juce::String(int(image.size() / 1024)) + " KB to " + file.getFullPathName() +
                  (threadShouldExit() ? " (partial: cancelled)" : "") +
+                 (internalRom ? juce::String("\n\nNote: this is the QS's built-in sound ROM, not the card in the slot.") : juce::String()) +
                  (badSums ? "\n\nWarning: " + juce::String(badSums) + " blocks had checksum mismatches after 3 tries." : "");
     }
 
