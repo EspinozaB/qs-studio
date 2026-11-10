@@ -1,7 +1,9 @@
 # QS Studio
 
-A modern, portable toolkit for the Alesis QS6 / QS7 / QS8 / QSR. One `.exe`, no installer, no registry:
-settings are saved next to the exe (`QSStudio.settings`).
+A modern, portable toolkit for the Alesis QS6 / QS7 / QS8 / QSR. One `.exe`, no installer, no registry, nothing in AppData:
+everything it saves goes in a `QS Studio Data` folder next to the program.
+
+**Status: 0.4.0 pre-alpha.** Only being tested by the author so far. See [Versions](#versions).
 
 ## What it does
 
@@ -43,8 +45,11 @@ Picking mixes over MIDI: the QS only changes mixes on program changes when Globa
 (not "On"). QS Studio offers to set it to its channel the first time you pick a mix. Reading Preset mixes sets it for the read and
 puts your setting back afterwards.
 
-**Where things are saved:** one folder, next to the program if it can write there (portable), otherwise `%AppData%\QS Studio`.
-The Connection page shows it and opens it.
+**Where things are saved:** only in `QS Studio Data`, next to the program (on macOS, next to the `.app`; for a Linux AppImage,
+next to the `.AppImage`). Nothing goes in AppData, the registry or your home folder, so the QS Studio folder can live anywhere
+you can write to: Documents, the Desktop or a USB stick (not Program Files, which is read-only for normal programs; QS Studio
+warns you if it can't write). **To update, replace the program and keep `QS Studio Data`.** The Connection page shows the folder
+and opens it. Files from older versions (next to the exe, or in AppData) are moved in automatically.
 - `QSStudio.<model>.library`: what was read or imported, **one file per model** (`QSStudio.QS6.library`, `QSStudio.QSR.library`),
   so two synths never overwrite each other. Export / Import on the Connection page to keep a copy or share one.
 - `Backups\`: backups made on the Backup & Restore page.
@@ -91,6 +96,27 @@ See `core/qs_card.cpp`. Summary:
 2. Editor (programs, mixes, effects, global; live editing with opcode 10)
 3. QS player VST3 / standalone using your own card images and decoded programs
 4. 1:1 emulation core (needs the firmware EPROM dump and the sound/effects ASICs emulated)
+
+## Versions
+
+Version numbers follow [Semantic Versioning](https://semver.org): `MAJOR.MINOR.PATCH`. Everything stays below 1.0 until the
+first public release. The stage is shown next to the number:
+
+| Stage | Who has it | What it means |
+|---|---|---|
+| **pre-alpha** (0.4.x, now) | the author | Features still being built and changed daily; much untested on hardware. |
+| **alpha** (0.5.x and up) | a small group of QS owners | Most features in, expect bugs and changes; back up your synth first. |
+| **beta** | a wider group | Feature-complete for 1.0 (QS6 and QSR); only fixes from here. |
+| **release candidate** (`1.0.0-rc.1`) | everyone who wants it | Believed ready; last chance to catch problems. |
+| **1.0.0** | public | First stable release. |
+
+PATCH goes up for fixes, MINOR for new features. (There is no "gamma" or "delta": after beta comes the release candidate.)
+
+## Windows security prompts
+
+QS Studio never asks for administrator rights (its manifest requests `asInvoker`), so it doesn't trigger a UAC prompt. The
+"Windows protected your PC" (SmartScreen) or "unknown publisher" warning appears because the exe isn't code-signed yet. Until it
+is: **More info > Run anyway**, or right-click the exe > Properties > tick **Unblock**. Signing is planned before the alpha.
 
 ## Trademarks, copyright and what ships
 

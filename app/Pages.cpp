@@ -164,8 +164,9 @@ ConnectionPage::ConnectionPage(Session& s) : session(s) {
 }
 
 void ConnectionPage::updateFilesText() {
-    filesSec.body = "QS Studio keeps everything in one folder: next to the QS Studio program if it can write there (so it stays portable on a USB "
-                    "stick), otherwise in your user AppData folder.\n"
+    filesSec.body = "QS Studio keeps everything it saves in the \"QS Studio Data\" folder next to the program, and nowhere else (no AppData, "
+                    "no registry). Move or copy the QS Studio folder and everything comes along. To update, replace the program and keep "
+                    "the data folder.\n"
                     "This copy uses: " + settingsDir().getFullPathName() + "\n"
                     "- QSStudio.<model>.library: names, programs and mixes read from each synth (one file per model, so your QS6 "
                     "and QSR don't overwrite each other). This one is QSStudio." + session.library.model + ".library.\n"

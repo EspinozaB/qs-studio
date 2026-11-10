@@ -14,13 +14,49 @@ juce::String hex(const qs::Bytes& b, size_t maxBytes) {
 }
 
 // Portable: settings live next to the .exe when that folder is writable.
-juce::File settingsDir() {
-    auto exeDir = juce::File::getSpecialLocation(juce::File::currentExecutableFile).getParentDirectory();
-    if (exeDir.hasWriteAccess()) return exeDir;
-    auto d = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("QS Studio");
-    d.createDirectory();
-    return d;
+// The folder QS Studio lives in. Everything it writes goes in a "QS Studio Data" folder beside it, never in AppData,
+// the registry or the user's home folder, so the whole thing can be moved, backed up or put on a USB stick, and updating
+// means replacing the program and leaving the data folder alone.
+//  - Windows / Linux: the folder holding the executable.
+//  - macOS: the folder holding QS Studio.app (writing inside the .app would break its signature).
+//  - Linux AppImage: the folder holding the .AppImage file (the image itself is mounted read-only).
+juce::File appFolder() {
+    const auto exe = juce::File::getSpecialLocation(juce::File::currentExecutableFile);
+    const auto appImage = juce::SystemStats::getEnvironmentVariable("APPIMAGE", {});
+    if (appImage.isNotEmpty()) return juce::File(appImage).getParentDirectory();
+    for (auto d = exe.getParentDirectory(); d != d.getParentDirectory(); d = d.getParentDirectory())
+        if (d.hasFileExtension("app")) return d.getParentDirectory();
+    return exe.getParentDirectory();
 }
+
+namespace {
+// Files from older versions (beside the exe, or in AppData) are moved into the data folder once.
+void moveOldFiles(const juce::File& from, const juce::File& to) {
+    if (!from.isDirectory() || from == to) return;
+    for (const auto& f : from.findChildFiles(juce::File::findFilesAndDirectories, false)) {
+        const auto name = f.getFileName();
+        const bool ours = name.startsWith("QSStudio.") || name == "Backups" || name == "Recordings";
+        if (ours && !to.getChildFile(name).exists()) f.moveFileTo(to.getChildFile(name));
+    }
+}
+}  // namespace
+
+juce::File settingsDir() {
+    static const juce::File dir = [] {
+        auto d = appFolder().getChildFile("QS Studio Data");
+        d.createDirectory();
+        moveOldFiles(appFolder(), d);
+        const auto oldAppData = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("QS Studio");
+        moveOldFiles(oldAppData, d);
+        if (oldAppData.isDirectory() && oldAppData.findChildFiles(juce::File::findFilesAndDirectories, false).isEmpty()) oldAppData.deleteRecursively();
+        return d;
+    }();
+    return dir;
+}
+
+bool dataFolderWritable() { return settingsDir().isDirectory() && settingsDir().hasWriteAccess(); }
+
+juce::String versionLabel() { return juce::String(ProjectInfo::versionString) + " " + QS_STAGE; }
 
 juce::PropertiesFile& settings() {
     static juce::PropertiesFile p(settingsDir().getChildFile("QSStudio.settings"), juce::PropertiesFile::Options());
@@ -369,7 +405,7 @@ MainComponent::MainComponent() {
         addChildComponent(p.comp);
     }
     sidebar.setItems(items);
-    sidebar.footer = "QS Studio " + juce::String(ProjectInfo::versionString) +
+    sidebar.footer = "QS Studio " + versionLabel() +
                      ". Unofficial, not made or endorsed by Alesis or inMusic. Alesis, QuadraSynth and the QS model names are "
                      "trademarks of their owners and are used only to say which synths this works with.";
     sidebar.onSelect = [this](int i) { showPage(i); };
@@ -479,6 +515,13 @@ MainComponent::MainComponent() {
     updatePill();
     setSize(1400, 940);
     connection->onPortsChanged = [this] { updatePill(); };
+    if (!dataFolderWritable())
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::MessageBoxIconType::WarningIcon, "QS Studio can't save its files",
+            "QS Studio keeps everything in a \"QS Studio Data\" folder next to the program, but it can't write to:\n" +
+                settingsDir().getFullPathName() +
+                "\n\nMove the whole QS Studio folder somewhere you own, such as Documents, the Desktop or a USB stick, and run it from "
+                "there. (Program Files is read-only for normal programs.) Until then nothing you read or change will be kept.");
     connection->connectSaved();
     showPage(session.midi.isOpen() ? 0 : 6);  // not connected yet: start on Connection
 }

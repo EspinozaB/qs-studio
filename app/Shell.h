@@ -67,7 +67,7 @@ public:
         if (footer.isNotEmpty()) {
             g.setColour(theme::dim.withAlpha(0.8f));
             g.setFont(theme::uiFont(11.0f));
-            g.drawFittedText(footer, getLocalBounds().removeFromBottom(70).reduced(18, 8), juce::Justification::bottomLeft, 5, 1.0f);
+            g.drawFittedText(footer, getLocalBounds().removeFromBottom(92).reduced(18, 8), juce::Justification::bottomLeft, 7, 1.0f);
         }
         juce::String lastGroup;
         for (int i = 0; i < int(items.size()); ++i) {

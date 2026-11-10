@@ -11,7 +11,10 @@
 #include "../core/qs_samples.h"
 #include "MidiLink.h"
 
-juce::File settingsDir();
+juce::File settingsDir();      // "QS Studio Data" beside the program: every file QS Studio writes goes here
+juce::File appFolder();
+bool dataFolderWritable();
+juce::String versionLabel();  // e.g. "0.4.0 pre-alpha"
 juce::PropertiesFile& settings();
 
 struct BankInfo {

@@ -37,6 +37,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           Copy-Item "out/QS Studio.exe" "out/QS-Studio.exe"
+          $cm = Get-Content CMakeLists.txt -Raw
+          $ver = [regex]::Match($cm, 'project\(QSStudio VERSION ([0-9.]+)').Groups[1].Value
+          $stage = [regex]::Match($cm, 'set\(QS_STAGE "([^"]*)"\)').Groups[1].Value
+          $sha = $env:GITHUB_SHA.Substring(0,7)
           gh release delete latest --cleanup-tag -y 2>$null
-          $notes = "Automatic build of main at $($env:GITHUB_SHA.Substring(0,7)). Untested on hardware; use at your own risk."
-          gh release create latest "out/QS-Studio.exe" --prerelease --target $env:GITHUB_SHA --title "QS Studio (latest build)" --notes $notes
+          $notes = @"
+          QS Studio $ver $stage, automatic build of main at $sha.
+
+          $stage means things change often and some features are untested on hardware. Back up your synth (Backup & Restore) before writing anything to it.
+
+          Put QS-Studio.exe in a folder of its own (Documents, Desktop or a USB stick; not Program Files). It keeps everything it saves in a "QS Studio Data" folder next to it. To update, replace the exe and keep that folder.
+
+          Unofficial; not made or endorsed by Alesis or inMusic.
+          "@
+          gh release create latest "out/QS-Studio.exe" --prerelease --target $env:GITHUB_SHA --title "QS Studio $ver $stage ($sha)" --notes $notes

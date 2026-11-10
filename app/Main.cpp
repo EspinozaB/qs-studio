@@ -23,7 +23,7 @@ private:
     class MainWindow : public juce::DocumentWindow {
     public:
         explicit MainWindow(const juce::String& name)
-            : DocumentWindow(name + "  -  Alesis QS toolkit",
+            : DocumentWindow(name + " " + versionLabel() + "  -  for Alesis QS synths (unofficial)",
                              theme::bg,
                              DocumentWindow::allButtons) {
             setUsingNativeTitleBar(true);
