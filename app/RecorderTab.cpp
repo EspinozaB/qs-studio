@@ -127,6 +127,9 @@ RecorderTab::RecorderTab(Session& s) : session(s) {
     devices.initialise(2, 2, state.get(), true);
     devices.addAudioCallback(&recorder);
     selector = std::make_unique<juce::AudioDeviceSelectorComponent>(devices, 1, 2, 0, 2, false, false, true, false);
+    addAndMakeVisible(audioSec);
+    addAndMakeVisible(recSec);
+    addAndMakeVisible(autoSec);
     addAndMakeVisible(*selector);
     addAndMakeVisible(lcd);
 
@@ -232,7 +235,7 @@ void RecorderTab::toggleRecord() {
 
 void RecorderTab::startAuto() {
     if (!session.midi.isOpen()) {
-        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "Not connected", "Connect to the QS on the Device tab first.");
+        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "Not connected", "Connect to the QS on the Connection page first.");
         return;
     }
     if (recorder.isRecording()) recorder.stop();
@@ -288,7 +291,7 @@ void RecorderTab::timerCallback() {
         lines.add("RECORDING  " + juce::String(recorder.seconds(), 1) + " s");
     } else {
         lines.add(recorder.rate() > 0 ? "READY  " + juce::String(int(recorder.rate())) + " Hz" + (recorder.monitor.load() ? "   MONITORING" : "")
-                                      : "NO AUDIO DEVICE: pick one on the left");
+                                      : "NO AUDIO INPUT: pick one in step 1");
     }
     lcd.setLines(sampler || recorder.isRecording() ? juce::String("REC") : juce::String("Record"), lines);
     recBtn.setButtonText(recorder.isRecording() && !sampler ? "Stop" : "Record");
@@ -315,38 +318,49 @@ void RecorderTab::paint(juce::Graphics& g) {
 
 void RecorderTab::resized() {
     auto r = getLocalBounds().reduced(14);
-    auto left = r.removeFromLeft(juce::jmin(560, r.getWidth() / 2));
-    selector->setBounds(left);
-    r.removeFromLeft(20);
-    lcd.setBounds(r.removeFromTop(110));
-    r.removeFromTop(8);
-    meterArea = r.removeFromTop(30);
+    auto left = r.removeFromLeft(juce::jmin(560, r.getWidth() / 2 - 20));
+    audioSec.setBounds(left);
+    selector->setBounds(audioSec.contentArea());
+    r.removeFromLeft(14);
+    lcd.setBounds(r.removeFromTop(80));
+    r.removeFromTop(6);
+    meterArea = r.removeFromTop(22);
     r.removeFromTop(10);
-    auto mon = r.removeFromTop(30);
-    monitorToggle.setBounds(mon.removeFromLeft(230));
-    monitorLevel.setBounds(mon.removeFromLeft(220));
-    r.removeFromTop(10);
-    auto row = [&r](int h = 30) { auto x = r.removeFromTop(h); r.removeFromTop(8); return x; };
     auto labelled = [](juce::Rectangle<int> rr, juce::Label& l, juce::Component& c) {
         l.setBounds(rr.removeFromLeft(130));
         c.setBounds(rr);
     };
+    recSec.setBounds(r.removeFromTop(recSec.heightFor(r.getWidth(), 4 * 38 + 8)));
+    auto c = recSec.contentArea();
+    auto row = [&c](int h = 30) { auto x = c.removeFromTop(h); c.removeFromTop(8); return x; };
+    auto mon = row();
+    monitorToggle.setBounds(mon.removeFromLeft(230));
+    monitorLevel.setBounds(mon.removeFromLeft(200));
     auto pr = row();
     nameFromProgBtn.setBounds(pr.removeFromRight(150));
     pr.removeFromRight(8);
     labelled(pr, prefixLabel, prefix);
     labelled(row().removeFromLeft(330), bitsLabel, bits);
-    auto rb = row(40);
+    auto rb = row(34);
     recBtn.setBounds(rb.removeFromLeft(140));
     rb.removeFromLeft(10);
     folderBtn.setBounds(rb.removeFromLeft(190));
-    r.removeFromTop(14);
-    labelled(row().removeFromLeft(380), lowLabel, low);
-    labelled(row().removeFromLeft(380), highLabel, high);
-    labelled(row().removeFromLeft(330), stepLabel, stepSemis);
-    labelled(row().removeFromLeft(380), velLabel, velocities);
-    labelled(row().removeFromLeft(330), holdLabel, hold);
-    labelled(row().removeFromLeft(330), tailLabel, tail);
-    autoBtn.setBounds(row(40).removeFromLeft(200));
-    status.setBounds(row(40));
+    r.removeFromTop(12);
+    autoSec.setBounds(r.removeFromTop(autoSec.heightFor(r.getWidth(), 3 * 38 + 4 + 34)));
+    c = autoSec.contentArea();
+    auto half = [](juce::Rectangle<int> rr, bool second) { return second ? rr.withTrimmedLeft(rr.getWidth() / 2 + 6) : rr.withWidth(rr.getWidth() / 2 - 6); };
+    auto r1 = row();
+    labelled(half(r1, false), lowLabel, low);
+    labelled(half(r1, true), highLabel, high);
+    auto r2 = row();
+    labelled(half(r2, false), stepLabel, stepSemis);
+    labelled(half(r2, true), velLabel, velocities);
+    auto r3 = row();
+    labelled(half(r3, false), holdLabel, hold);
+    labelled(half(r3, true), tailLabel, tail);
+    row(4);
+    auto ab = row(34);
+    autoBtn.setBounds(ab.removeFromLeft(200));
+    ab.removeFromLeft(12);
+    status.setBounds(ab);
 }

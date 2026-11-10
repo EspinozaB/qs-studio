@@ -2,6 +2,7 @@
 #pragma once
 #include <JuceHeader.h>
 
+#include "FrontPanel.h"
 #include "Session.h"
 #include "Theme.h"
 
@@ -16,6 +17,9 @@ public:
     void showBank(int bank);
     void refresh();
     void applySavedImports(bool onlyEmptyBanks);  // re-import the remembered .syx folder
+    void copyBankToCard();   // pick a .syx and copy it onto the card bank being shown
+    void convertBankFile();  // QS6 <-> QSR sample renumbering
+    void selectProgram(int prog);  // select it in the list, which sends it to the QS
 
 private:
     // ListBoxModel
@@ -35,10 +39,8 @@ private:
     void openInEditor(int prog);
     void sendCachedToEditBuffer();
     void storeToUser();
-    void copyBankToCard();
     void startCardCopy(std::vector<qs::Bytes> msgs, std::array<std::optional<qs::Program>, 128> expected, juce::String label, int cardBank);
     void finishCardCopy(std::array<std::optional<qs::Program>, 128> expected, juce::String label, int cardBank, juce::File backup);
-    void convertBankFile();
     void step(int delta);
 
     Session& session;
@@ -48,6 +50,7 @@ private:
     bool suppressSend = false;
 
     theme::Lcd lcd;
+    std::unique_ptr<FrontPanel> panel;
     juce::OwnedArray<juce::TextButton> bankButtons;  // User, Preset 1-3, GenMIDI, Card
     juce::ComboBox cardBankBox;
     juce::TextEditor search;

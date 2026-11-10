@@ -4,7 +4,9 @@
 #include "../core/qs_card.h"
 #include "MidiLink.h"
 #include "Session.h"
+#include "Pages.h"
 #include "PerformanceControls.h"
+#include "Shell.h"
 #include "Theme.h"
 
 class LibraryTab;
@@ -12,47 +14,6 @@ class EditorTab;
 
 // Shared helpers
 juce::String hex(const qs::Bytes& b, size_t maxBytes = 32);
-
-class DeviceTab : public juce::Component, private MidiLink::Listener {
-public:
-    explicit DeviceTab(MidiLink& m);
-    ~DeviceTab() override;
-    void resized() override;
-
-private:
-    void sysexReceived(const qs::Bytes& msg) override;
-    void refreshDevices();
-    void connect();
-
-    MidiLink& midi;
-    juce::Label inLabel{{}, "MIDI In"}, outLabel{{}, "MIDI Out"}, status;
-    juce::ComboBox inBox, outBox;
-    juce::TextButton refreshBtn{"Refresh"}, connectBtn{"Connect"}, identifyBtn{"Identify synth"};
-    juce::TextEditor log;
-};
-
-class SysexTab : public juce::Component, private MidiLink::Listener {
-public:
-    explicit SysexTab(MidiLink& m);
-    ~SysexTab() override;
-    void resized() override;
-
-private:
-    void sysexReceived(const qs::Bytes& msg) override;
-    void updateSummary(const std::vector<qs::Bytes>& msgs, const juce::String& title);
-    void save();
-    void load();
-    void sendLoaded();
-
-    MidiLink& midi;
-    bool recording = false;
-    std::vector<qs::Bytes> captured, loaded;
-    juce::TextButton recBtn{"Record"}, stopBtn{"Stop"}, saveBtn{"Save .syx"}, requestBtn{"Ask QS to Send All"},
-        loadBtn{"Open .syx"}, sendBtn{"Send to QS"};
-    juce::Label countLabel, help;
-    juce::TextEditor summary;
-    std::unique_ptr<juce::FileChooser> chooser;
-};
 
 class CardTab : public juce::Component {
 public:
@@ -76,6 +37,15 @@ private:
         testBtn{"Test card reader"}, readBtn{"Read card from QS"}, writeBtn{"Write image to FLASH card"}, romBtn{"Dump internal sample ROM..."};
     juce::ComboBox sizeBox;
     juce::Label sizeLabel{{}, "Card size"};
+    Section imageSec{"Look inside a card image", "Open a card image file from your computer (.img or .bin, for example a Sound Bridge image or a "
+                                                 "card you read with the button below) to list its samples, programs and mixes, and export the "
+                                                 "samples as WAV files or SFZ instruments for a software sampler."};
+    Section slotSec{"The card in the QS", "Power the QS off before inserting or removing a card. Test checks that the QS answers card "
+                                          "requests. Read saves a FLASH sample card to an image; Write puts an image onto a FLASH card. "
+                                          "RAM512 program cards can't be read or written this way: use Move Banks for those."};
+    Section romSec{"Built-in sample ROM", "On units where Test says \"built-in sound ROM\" (the QSR does), card reads return the synth's own "
+                                          "sample ROM. This saves it to a file, about 1 hour per 8 MB, and resumes if you stop. "
+                                          "Only the first 8 MB can be reached over MIDI. Keep the file private: the samples are Alesis's."};
     juce::TextEditor info;
     std::unique_ptr<juce::FileChooser> chooser;
 };
@@ -89,20 +59,33 @@ public:
 
 private:
     void sysexReceived(const qs::Bytes& msg) override;
+    void showPage(int index);
+    void applyLook();  // panel colours from the look setting or the connected model
+    void updatePill();
+    void fillControllerBox();
+
+    struct PageInfo { juce::String group, title, summary, help, tip; juce::Component* comp; };
 
     Session session;  // first: everything below uses it
-    juce::TabbedComponent tabs{juce::TabbedButtonBar::TabsAtTop};
+    std::vector<std::unique_ptr<juce::Component>> owned;
+    std::vector<PageInfo> pages;
+    int current = -1;
     LibraryTab* library = nullptr;
     EditorTab* editor = nullptr;
+    ConnectionPage* connection = nullptr;
+    GlobalPage* globalPage = nullptr;
+
+    Sidebar sidebar;
+    PageHeader header;
+    StatusPill pill;
+    juce::Label appTitle{{}, "QS Studio"}, lookLabel{{}, "Panel look"}, chLabel{{}, "MIDI ch"}, ctrlLabel{{}, "Controller in"};
+    juce::ComboBox lookBox, channelBox, controllerBox;
+    juce::Array<juce::MidiDeviceInfo> controllerDevices;
 
     juce::MidiKeyboardComponent keyboard{session.keys, juce::MidiKeyboardComponent::horizontalKeyboard};
     PerformanceControls perf{session};
-    juce::Label chLabel{{}, "MIDI ch"}, velLabel{{}, "Velocity"}, statusLabel;
-    juce::ComboBox channelBox, controllerBox;
-    juce::Label ctrlLabel{{}, "Controller in"};
-    juce::Array<juce::MidiDeviceInfo> controllerDevices;
-    void fillControllerBox();
+    juce::Label velLabel{{}, "Velocity"}, statusLabel;
     juce::Slider velSlider{juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight};
-    juce::TextButton notesOffBtn{"All notes off"};
+    juce::TextButton notesOffBtn{"All notes off"}, keysBtn{"Hide keyboard"};
     juce::TooltipWindow tooltips{this, 600};
 };

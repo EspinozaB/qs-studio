@@ -138,7 +138,11 @@ struct Session : private juce::MidiKeyboardState::Listener, private juce::MidiIn
         return qs::romSetForModel(model.toStdString());
     }
     // The original QS6 has one assignable slider (Controller A); the other models have four (A-D).
-    bool hasOneControllerSlider() const { return deviceName.startsWith("QS6 "); }
+    // The QS6 has only the Controller A slider. Uses the connected model, or the last one connected.
+    bool hasOneControllerSlider() const {
+        const auto model = deviceName.isNotEmpty() ? deviceName : settings().getValue("lastModel", "QSR");
+        return model.upToFirstOccurrenceOf(" ", false, false) == "QS6";
+    }
 
     // Hooks set by MainComponent so tabs can hand work to each other.
     std::function<void(const qs::Program&, const juce::String& where)> openInEditor;

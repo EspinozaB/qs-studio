@@ -4,9 +4,29 @@
 
 namespace theme {
 
-inline const juce::Colour bg{0xff1c1d1f}, panel{0xff26272a}, panelHi{0xff2f3034}, line{0xff3b3d42}, text{0xfff0f1f2},
+// Colours are switched per synth model (see applyStyle). Components read them when they paint.
+inline juce::Colour bg{0xff1c1d1f}, panel{0xff26272a}, panelHi{0xff2f3034}, line{0xff3b3d42}, text{0xfff0f1f2},
     dim{0xffa3a6ab}, accent{0xff74dc9c}, accentDim{0xff3f7a57}, warn{0xffe2a94b}, bad{0xffe0675a},
     lcdBg{0xff5e9a6c}, lcdInk{0xff17301f}, bezel{0xff0d0e0f};
+
+enum class Style { QS6, QSR };
+inline Style currentStyle = Style::QSR;
+
+// QS6: black keyboard panel with a yellow-green backlit LCD. QS7/QS8/QSR: black rack panel with a grey-blue LCD.
+inline void applyStyle(Style s) {
+    currentStyle = s;
+    if (s == Style::QS6) {
+        accent = juce::Colour(0xffa6d65c);
+        accentDim = juce::Colour(0xff55702f);
+        lcdBg = juce::Colour(0xff9fb85a);
+        lcdInk = juce::Colour(0xff1b2410);
+    } else {
+        accent = juce::Colour(0xff71b7e0);
+        accentDim = juce::Colour(0xff335c76);
+        lcdBg = juce::Colour(0xff8ea3ad);
+        lcdInk = juce::Colour(0xff111c24);
+    }
+}
 
 inline juce::Font uiFont(float h, bool bold = false) {
     return juce::Font(juce::FontOptions(h, bold ? juce::Font::bold : juce::Font::plain));
@@ -17,7 +37,10 @@ inline juce::Font monoFont(float h, bool bold = false) {
 
 class LookAndFeel : public juce::LookAndFeel_V4 {
 public:
-    LookAndFeel() {
+    LookAndFeel() { refresh(); }
+
+    // Re-read the theme colours (after applyStyle).
+    void refresh() {
         setColourScheme({bg, panel, panel, line, text, panelHi, text, accent, text});
         setColour(juce::ResizableWindow::backgroundColourId, bg);
         setColour(juce::TextButton::buttonColourId, panelHi);

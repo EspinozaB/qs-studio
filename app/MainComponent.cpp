@@ -48,220 +48,9 @@ static qs::Bytes toBytes(const juce::MemoryBlock& mb) {
     return qs::Bytes(p, p + mb.getSize());
 }
 
-// ---------- Device ----------
-DeviceTab::DeviceTab(MidiLink& m) : midi(m) {
-    for (juce::Component* c : std::initializer_list<juce::Component*>{&inLabel, &outLabel, &status, &inBox, &outBox, &refreshBtn, &connectBtn, &identifyBtn, &log})
-        addAndMakeVisible(c);
-    setupLog(log);
-    status.setText("Not connected", juce::dontSendNotification);
-    refreshBtn.onClick = [this] { refreshDevices(); };
-    connectBtn.onClick = [this] { connect(); };
-    identifyBtn.onClick = [this] {
-        if (!midi.isOpen()) { info("Not connected", "Pick your MIDI In and Out and click Connect first."); return; }
-        appendLine(log, "> Device inquiry");
-        midi.send(qs::deviceInquiry());
-    };
-    midi.addListener(this);
-    refreshDevices();
-    appendLine(log, "Connect the QS MIDI OUT to your interface's MIDI IN, and the interface's MIDI OUT to the QS MIDI IN.");
-    appendLine(log, "On the QS, the Global I/O setting must be MIDI (not PC or Mac serial).");
-}
-
-DeviceTab::~DeviceTab() { midi.removeListener(this); }
-
-void DeviceTab::refreshDevices() {
-    inBox.clear();
-    outBox.clear();
-    inBox.addItemList(midi.inputNames(), 1);
-    outBox.addItemList(midi.outputNames(), 1);
-    auto lastIn = settings().getValue("midiIn"), lastOut = settings().getValue("midiOut");
-    for (int i = 0; i < inBox.getNumItems(); ++i) if (inBox.getItemText(i) == lastIn) inBox.setSelectedItemIndex(i);
-    for (int i = 0; i < outBox.getNumItems(); ++i) if (outBox.getItemText(i) == lastOut) outBox.setSelectedItemIndex(i);
-    if (inBox.getSelectedId() == 0 && inBox.getNumItems() > 0) inBox.setSelectedItemIndex(0);
-    if (outBox.getSelectedId() == 0 && outBox.getNumItems() > 0) outBox.setSelectedItemIndex(0);
-}
-
-void DeviceTab::connect() {
-    juce::String err;
-    if (!midi.open(inBox.getText(), outBox.getText(), err)) {
-        status.setText("Not connected", juce::dontSendNotification);
-        info("MIDI", err);
-        return;
-    }
-    settings().setValue("midiIn", inBox.getText());
-    settings().setValue("midiOut", outBox.getText());
-    settings().saveIfNeeded();
-    status.setText("Connected: " + inBox.getText() + " / " + outBox.getText(), juce::dontSendNotification);
-    appendLine(log, "Connected. Asking the QS to identify itself...");
-    midi.send(qs::deviceInquiry());
-}
-
-void DeviceTab::sysexReceived(const qs::Bytes& msg) {
-    if (auto d = qs::parseDeviceReply(msg)) {
-        appendLine(log, "< " + juce::String(d->model) + ", OS version " + juce::String(d->version));
-        status.setText("Connected to " + juce::String(d->model) + " v" + juce::String(d->version), juce::dontSendNotification);
-    }
-}
-
-void DeviceTab::resized() {
-    auto r = getLocalBounds().reduced(12);
-    auto row = r.removeFromTop(28);
-    inLabel.setBounds(row.removeFromLeft(70));
-    inBox.setBounds(row.removeFromLeft(260));
-    row.removeFromLeft(12);
-    outLabel.setBounds(row.removeFromLeft(70));
-    outBox.setBounds(row.removeFromLeft(260));
-    r.removeFromTop(8);
-    row = r.removeFromTop(28);
-    refreshBtn.setBounds(row.removeFromLeft(90));
-    row.removeFromLeft(8);
-    connectBtn.setBounds(row.removeFromLeft(100));
-    row.removeFromLeft(8);
-    identifyBtn.setBounds(row.removeFromLeft(130));
-    row.removeFromLeft(12);
-    status.setBounds(row);
-    r.removeFromTop(8);
-    log.setBounds(r);
-}
-
-// ---------- SysEx librarian ----------
-SysexTab::SysexTab(MidiLink& m) : midi(m) {
-    for (juce::Component* c : std::initializer_list<juce::Component*>{&recBtn, &stopBtn, &saveBtn, &requestBtn, &loadBtn, &sendBtn, &countLabel, &help, &summary})
-        addAndMakeVisible(c);
-    setupLog(summary);
-    help.setText("Record, then on the QS press STORE, PAGE up 4 times, STORE (\"SEND ALL DATA TO MIDI\"). "
-                 "Or click Ask QS to Send All.",
-                 juce::dontSendNotification);
-    stopBtn.setEnabled(false);
-    saveBtn.setEnabled(false);
-    sendBtn.setEnabled(false);
-    recBtn.onClick = [this] {
-        captured.clear();
-        recording = true;
-        recBtn.setEnabled(false);
-        stopBtn.setEnabled(true);
-        countLabel.setText("Recording...", juce::dontSendNotification);
-    };
-    stopBtn.onClick = [this] {
-        recording = false;
-        recBtn.setEnabled(true);
-        stopBtn.setEnabled(false);
-        saveBtn.setEnabled(!captured.empty());
-        updateSummary(captured, "Captured");
-    };
-    requestBtn.onClick = [this] {
-        if (!midi.isOpen()) { info("Not connected", "Connect on the Device tab first."); return; }
-        if (!recording) recBtn.onClick();
-        midi.send(qs::allDumpRequest());
-    };
-    saveBtn.onClick = [this] { save(); };
-    loadBtn.onClick = [this] { load(); };
-    sendBtn.onClick = [this] { sendLoaded(); };
-    midi.addListener(this);
-}
-
-SysexTab::~SysexTab() { midi.removeListener(this); }
-
-void SysexTab::sysexReceived(const qs::Bytes& msg) {
-    if (!recording) return;
-    const int op = qs::opcodeOf(msg);
-    if (op >= qs::SectorErase && op <= qs::FlashNack) return;  // card traffic is not a patch dump
-    captured.push_back(msg);
-    size_t bytes = 0;
-    for (auto& c : captured) bytes += c.size();
-    countLabel.setText(juce::String(int(captured.size())) + " messages, " + juce::String(int(bytes)) + " bytes",
-                       juce::dontSendNotification);
-}
-
-void SysexTab::updateSummary(const std::vector<qs::Bytes>& msgs, const juce::String& title) {
-    auto s = qs::summarize(msgs);
-    summary.clear();
-    appendLine(summary, title + ": " + juce::String(int(msgs.size())) + " messages");
-    appendLine(summary, "Programs " + juce::String(s.programs) + ", Mixes " + juce::String(s.mixes + s.oldMixes) + ", Effects " +
-                            juce::String(s.effects) + ", Global " + juce::String(s.globals) + ", Other " + juce::String(s.other));
-    if (s.programs + s.mixes + s.oldMixes + s.effects + s.globals > 0)
-        appendLine(summary, qs::isCompleteBackup(s)
-                                ? juce::String("Complete backup (all 357 parts).")
-                                : "INCOMPLETE: a full Send All is 128 programs, 100 mixes, 128 effects and 1 global (357 parts). "
-                                  "Record again before relying on this file.");
-    if (!s.programNames.empty()) {
-        appendLine(summary, "\nPROGRAMS");
-        for (auto& [n, name] : s.programNames) appendLine(summary, juce::String(n).paddedLeft('0', 3) + "  " + juce::String(name));
-    }
-    if (!s.mixNames.empty()) {
-        appendLine(summary, "\nMIXES");
-        for (auto& [n, name] : s.mixNames) appendLine(summary, juce::String(n).paddedLeft('0', 2) + "  " + juce::String(name));
-    }
-}
-
-void SysexTab::save() {
-    chooser = std::make_unique<juce::FileChooser>("Save SysEx", settingsDir().getChildFile("qs_dump.syx"), "*.syx");
-    chooser->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
-                         [this](const juce::FileChooser& fc) {
-                             auto f = fc.getResult();
-                             if (f == juce::File()) return;
-                             juce::MemoryBlock mb;
-                             for (auto& m : captured) mb.append(m.data(), m.size());
-                             f.withFileExtension("syx").replaceWithData(mb.getData(), mb.getSize());
-                         });
-}
-
-void SysexTab::load() {
-    chooser = std::make_unique<juce::FileChooser>("Open SysEx", settingsDir(), "*.syx");
-    chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-                         [this](const juce::FileChooser& fc) {
-                             auto f = fc.getResult();
-                             juce::MemoryBlock mb;
-                             if (f == juce::File() || !f.loadFileAsData(mb)) return;
-                             loaded = qs::splitSysex(toBytes(mb));
-                             sendBtn.setEnabled(!loaded.empty());
-                             updateSummary(loaded, f.getFileName());
-                         });
-}
-
-void SysexTab::sendLoaded() {
-    if (!midi.isOpen()) { info("Not connected", "Connect on the Device tab first."); return; }
-    juce::AlertWindow::showAsync(
-        juce::MessageBoxOptions()
-            .withIconType(juce::MessageBoxIconType::WarningIcon)
-            .withTitle("Send to QS?")
-            .withMessage("This overwrites whatever the file contains on the QS (usually the whole User bank). Continue?")
-            .withButton("Send")
-            .withButton("Cancel"),
-        [this](int result) {
-            if (result != 1) return;
-            auto msgs = loaded;
-            juce::Thread::launch([this, msgs] {
-                for (auto& m : msgs) {
-                    midi.send(m);
-                    juce::Thread::sleep(int(MidiLink::wireSeconds(m.size()) * 1000) + 20);  // let the QS keep up
-                }
-                juce::MessageManager::callAsync([] { info("Done", "Sent."); });
-            });
-        });
-}
-
-void SysexTab::resized() {
-    auto r = getLocalBounds().reduced(12);
-    help.setBounds(r.removeFromTop(40));
-    auto row = r.removeFromTop(28);
-    for (auto* b : {&recBtn, &stopBtn, &saveBtn, &requestBtn}) {
-        b->setBounds(row.removeFromLeft(b == &requestBtn ? 150 : 90));
-        row.removeFromLeft(8);
-    }
-    countLabel.setBounds(row);
-    r.removeFromTop(8);
-    row = r.removeFromTop(28);
-    loadBtn.setBounds(row.removeFromLeft(110));
-    row.removeFromLeft(8);
-    sendBtn.setBounds(row.removeFromLeft(110));
-    r.removeFromTop(8);
-    summary.setBounds(r);
-}
-
 // ---------- Card tools ----------
 CardTab::CardTab(MidiLink& m) : midi(m) {
-    for (juce::Component* c : std::initializer_list<juce::Component*>{&openBtn, &wavBtn, &sfzBtn, &testBtn, &readBtn, &writeBtn, &romBtn, &sizeBox, &sizeLabel, &info})
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&imageSec, &slotSec, &romSec, &openBtn, &wavBtn, &sfzBtn, &testBtn, &readBtn, &writeBtn, &romBtn, &sizeBox, &sizeLabel, &info})
         addAndMakeVisible(c);
     setupLog(info);
     sizeBox.addItem("512 KB (RAM512)", 4);
@@ -285,13 +74,13 @@ CardTab::CardTab(MidiLink& m) : midi(m) {
                         "use Read card or Dump internal sample ROM for that.");
     romBtn.setTooltip("Saves the QS's built-in sample ROM to a .bin file over MIDI, on units where Test card reader says "
                       "\"built-in sound ROM\". Takes about 1 hour per 8 MB and can be paused and resumed.");
-    appendLine(info, "Open a QCard / QuadraCard / Sound Bridge .img to see its voices, programs and mixes and export samples.");
-    appendLine(info, "Test card reader asks the QS for the first 1 KB of the card in its slot. Power the QS off before inserting a card.");
+    appendLine(info, "Results appear here.");
+    sizeLabel.setColour(juce::Label::textColourId, theme::dim);
 }
 
 bool CardTab::requireMidi() {
     if (midi.isOpen()) return true;
-    ::info("Not connected", "Connect to the QS on the Device tab first.");
+    ::info("Not connected", "Connect to the QS on the Connection page first.");
     return false;
 }
 
@@ -380,7 +169,7 @@ void CardTab::testReader() {
                 msg = "< The QS answered: " + juce::String(qs::nackText(r.nackCode)) + ". The protocol works; check the card.";
                 break;
             default:
-                msg = "< No reply in 4 seconds. Check both MIDI cables, the Device tab connection, and that the QS I/O setting is MIDI.";
+                msg = "< No reply in 4 seconds. Check both MIDI cables, the Connection page, and that the QS I/O setting is MIDI.";
         }
         juce::MessageManager::callAsync([this, msg] { appendLine(info, msg); });
     });
@@ -463,70 +252,153 @@ void CardTab::writeCard() {
 }
 
 void CardTab::resized() {
-    auto r = getLocalBounds().reduced(12);
-    auto row = r.removeFromTop(28);
-    for (auto* b : {&openBtn, &wavBtn, &sfzBtn}) {
-        b->setBounds(row.removeFromLeft(b == &sfzBtn ? 170 : 130));
-        row.removeFromLeft(8);
-    }
-    r.removeFromTop(8);
-    row = r.removeFromTop(28);
-    sizeLabel.setBounds(row.removeFromLeft(70));
-    sizeBox.setBounds(row.removeFromLeft(150));
-    row.removeFromLeft(12);
-    for (auto* b : {&testBtn, &readBtn, &writeBtn, &romBtn}) {
-        b->setBounds(row.removeFromLeft(b == &writeBtn ? 190 : (b == &romBtn ? 240 : 140)));
-        row.removeFromLeft(8);
-    }
-    r.removeFromTop(8);
+    auto r = getLocalBounds().reduced(14);
+    auto left = r.removeFromLeft(juce::jmin(640, r.getWidth() / 2 + 60));
+    r.removeFromLeft(14);
     info.setBounds(r);
+    auto place = [&left](Section& sec, int controlsH) {
+        const int h = 48 + sec.textHeight(left.getWidth() - 32) + controlsH;
+        sec.setBounds(left.removeFromTop(h));
+        left.removeFromTop(12);
+        return sec.getBounds().withTrimmedTop(h - controlsH - 12).reduced(16, 0).withHeight(controlsH);
+    };
+    auto a = place(imageSec, 40);
+    auto row = a.removeFromTop(34);
+    for (auto* b : {&openBtn, &wavBtn, &sfzBtn}) {
+        b->setBounds(row.removeFromLeft(b == &sfzBtn ? 190 : 150));
+        row.removeFromLeft(8);
+    }
+    auto s = place(slotSec, 80);
+    row = s.removeFromTop(32);
+    sizeLabel.setBounds(row.removeFromLeft(72));
+    sizeBox.setBounds(row.removeFromLeft(170));
+    s.removeFromTop(8);
+    row = s.removeFromTop(34);
+    for (auto* b : {&testBtn, &readBtn, &writeBtn}) {
+        b->setBounds(row.removeFromLeft(b == &writeBtn ? 200 : 150));
+        row.removeFromLeft(8);
+    }
+    auto m = place(romSec, 40);
+    romBtn.setBounds(m.removeFromTop(34).removeFromLeft(240));
 }
 
 // ---------- Main window ----------
+namespace {
+bool looksLikeQs6(const juce::String& model) { return model.startsWith("QS6") || model.startsWithIgnoreCase("QuadraSynth"); }
+}  // namespace
+
 MainComponent::MainComponent() {
+    auto own = [this](juce::Component* c) {
+        owned.emplace_back(c);
+        return c;
+    };
     library = new LibraryTab(session);
     editor = new EditorTab(session);
-    tabs.addTab("Library", theme::bg, library, true);
-    tabs.addTab("Editor", theme::bg, editor, true);
-    tabs.addTab("Record", theme::bg, new RecorderTab(session), true);
-    tabs.addTab("Device", theme::bg, new DeviceTab(session.midi), true);
-    tabs.addTab("SysEx Librarian", theme::bg, new SysexTab(session.midi), true);
-    tabs.addTab("Card Tools", theme::bg, new CardTab(session.midi), true);
-    tabs.setTabBarDepth(44);
-    tabs.setOutline(0);
-    // Not connected yet: start on the Device tab.
-    tabs.setCurrentTabIndex(3);
-    addAndMakeVisible(tabs);
+    connection = new ConnectionPage(session);
+    globalPage = new GlobalPage(session);
+    auto* backup = new BackupPage(session);
+    auto* move = new MoveBanksPage(session, *backup, *library);
+    move->goToBackup = [this] { showPage(2); };
+    move->goToPrograms = [this] { showPage(0); };
+    own(move);
+    own(library);
+    own(editor);
+    own(connection);
+    own(globalPage);
+    own(backup);
+
+    pages = {
+        {"Play", "Programs",
+         "Browse every bank, click a program to hear it on the QS, and send, store or copy programs.",
+         "1. Pick a bank on the left. User is the bank you can change; Preset 1-3 and GenMIDI are fixed; Card banks are on a "
+         "PCMCIA card.\n"
+         "2. Click a program: the QS switches to it, so you can play it from the keyboard below or your own controller. "
+         "Up/Down arrow keys step through programs.\n"
+         "3. Names come from the QS (Read this bank) or from .syx files you import. The line under the list says where they came from.\n"
+         "4. Audition sends a program into the QS's edit buffer to try it without storing. Store to User writes it to a User slot.",
+         "Browse banks and play programs", library},
+        {"Edit", "Program Editor",
+         "Edit the program that's in the QS's edit buffer. Every change is sent as you make it, so you hear it right away.",
+         "1. Open a program from the Programs page, or click Get from QS to load whatever the QS is playing.\n"
+         "2. Each of the 4 sounds has a card with its main settings. Click a section to see all its settings.\n"
+         "3. Changes are only in the edit buffer. Click Store to keep them in a User slot on the QS, or Save .syx to keep them on this computer.",
+         "Edit programs live", editor},
+        {"Transfer", "Backup & Restore",
+         "Save the synth's User programs, mixes, effects and Global settings to one file, or put a saved file back.",
+         "A backup asks the QS to send everything you can change (what the manual calls Send All Data To MIDI) and saves it as a "
+         ".syx file. It doesn't change anything on the QS.\n"
+         "Restoring sends that file back and replaces the QS's User programs, mixes and effects. Global settings are left alone "
+         "unless you tick the box.\n"
+         "Backups are saved in the Backups folder next to QS Studio unless you choose another place.",
+         "Save or restore everything in User memory", backup},
+        {"Transfer", juce::String(juce::CharPointer_UTF8("Move banks QS6 \xe2\x86\x94 QSR")),
+         "Move programs between a QS6 and a QS7, QS8 or QSR without them playing the wrong samples.",
+         "The two families of synth have different sample ROMs, numbered differently. Follow the three steps: back up, convert, then "
+         "restore or copy to a card. The report lists every sample that changed and any the other synth doesn't have.",
+         "Convert banks between the QS6 and QS7/QS8/QSR sample sets", move},
+        {"Transfer", "Cards & ROM",
+         "Look inside card images, read and write FLASH sample cards, and save the built-in sample ROM.",
+         "Card images (.img) hold samples, programs and mixes. You can export the samples as WAVs.\n"
+         "Program cards (RAM512) are handled on the Programs page (Card banks) and Move Banks page instead.",
+         "PCMCIA sound cards and the internal sample ROM", own(new CardTab(session.midi))},
+        {"Capture", "Record & Sample",
+         "Record the QS's audio output through your audio interface, or sample every note of a program automatically.",
+         "1. Pick the audio input the QS's outputs are connected to (1 or 2 channels).\n"
+         "2. Turn on monitoring to hear it through your computer.\n"
+         "3. Record by hand, or use Auto-sample to play and record each note into its own WAV file.",
+         "Record audio and auto-sample programs", own(new RecorderTab(session))},
+        {"Setup", "Connection",
+         "Connect QS Studio to your synth over MIDI. Both directions are needed.",
+         "",
+         "MIDI ports and synth detection", connection},
+        {"Setup", "Global Settings",
+         "MIDI settings stored in the synth: controller numbers, Program Select and General MIDI mode.",
+         "QS Studio needs MIDI Program Select set to On (or to your channel) to switch programs.\n"
+         "Controller A-D send the MIDI CC numbers set here. The QS6 has only the Controller A slider; use the sliders on this page "
+         "for B, C and D.",
+         "Controller numbers, Program Select, General MIDI", globalPage},
+    };
+    std::vector<Sidebar::Item> items;
+    for (auto& p : pages) {
+        items.push_back({p.group, p.title, p.tip});
+        addChildComponent(p.comp);
+    }
+    sidebar.setItems(items);
+    sidebar.onSelect = [this](int i) { showPage(i); };
+    addAndMakeVisible(sidebar);
+    addAndMakeVisible(header);
+    header.onHeightChanged = [this] { resized(); };
 
     session.openInEditor = [this](const qs::Program& p, const juce::String& where) {
         editor->openProgram(p, where);
-        tabs.setCurrentTabIndex(1);
+        showPage(1);
     };
     session.setStatus = [this](const juce::String& s) { statusLabel.setText(s, juce::dontSendNotification); };
     session.midi.addListener(this);
 
-    keyboard.setAvailableRange(21, 108);
-    keyboard.setLowestVisibleKey(36);
-    keyboard.setKeyPressBaseOctave(4);
-    keyboard.setScrollButtonWidth(22);
-    addAndMakeVisible(keyboard);
+    // ---- top bar
+    appTitle.setFont(theme::uiFont(20.0f, true));
+    addAndMakeVisible(appTitle);
+    pill.onClick = [this] { showPage(6); };
+    pill.setTooltip("Click to open the Connection page");
+    addAndMakeVisible(pill);
+    lookBox.addItem("Match the synth", 1);
+    lookBox.addItem("QS6", 2);
+    lookBox.addItem("QS7 / QS8 / QSR", 3);
+    lookBox.setSelectedId(settings().getIntValue("panelLook", 1), juce::dontSendNotification);
+    lookBox.setTooltip("Colours and front panel of QS Studio. \"Match the synth\" follows the model that's connected (or was last connected).");
+    lookBox.onChange = [this] {
+        settings().setValue("panelLook", lookBox.getSelectedId());
+        settings().saveIfNeeded();
+        applyLook();
+    };
     for (int ch = 1; ch <= 16; ++ch) channelBox.addItem(juce::String(ch), ch);
     channelBox.setSelectedId(session.channel, juce::dontSendNotification);
-    channelBox.setTooltip("The MIDI channel the QS listens on in Program mode");
+    channelBox.setTooltip("The MIDI channel the QS receives on in Program mode (QS Global > MIDI channel).");
     channelBox.onChange = [this] {
         session.setChannel(channelBox.getSelectedId());
         library->refresh();
     };
-    velSlider.setRange(1, 127, 1);
-    velSlider.setValue(settings().getIntValue("keyVelocity", 100), juce::dontSendNotification);
-    velSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 44, 24);
-    auto applyVel = [this] {
-        keyboard.setVelocity(float(velSlider.getValue()) / 127.0f, false);
-        settings().setValue("keyVelocity", int(velSlider.getValue()));
-    };
-    velSlider.onValueChange = applyVel;
-    applyVel();
-    notesOffBtn.onClick = [this] { session.allNotesOff(); };
     controllerBox.setTooltip("A MIDI keyboard or controller connected to this computer. Everything you play on it goes to the QS on the "
                              "MIDI channel shown. Don't pick the interface port the QS itself is connected to.");
     controllerBox.onChange = [this] {
@@ -552,19 +424,50 @@ MainComponent::MainComponent() {
                 if (session.openController(saved, err)) controllerBox.setSelectedId(i + 2, juce::dontSendNotification);
             }
     }
-    addAndMakeVisible(controllerBox);
-    addAndMakeVisible(ctrlLabel);
-    ctrlLabel.setColour(juce::Label::textColourId, theme::dim);
-    ctrlLabel.setFont(theme::uiFont(13.0f, true));
-    statusLabel.setColour(juce::Label::textColourId, theme::dim);
-    statusLabel.setFont(theme::uiFont(13.0f));
-    for (juce::Component* c : std::initializer_list<juce::Component*>{&chLabel, &velLabel, &channelBox, &velSlider, &notesOffBtn, &statusLabel, &perf})
-        addAndMakeVisible(c);
-    for (auto* l : {&chLabel, &velLabel}) {
+    for (auto* l : {&lookLabel, &chLabel, &ctrlLabel, &velLabel}) {
         l->setColour(juce::Label::textColourId, theme::dim);
         l->setFont(theme::uiFont(13.0f, true));
+        l->setJustificationType(juce::Justification::centredRight);
     }
-    setSize(1360, 920);
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&lookLabel, &lookBox, &chLabel, &channelBox, &ctrlLabel, &controllerBox})
+        addAndMakeVisible(c);
+
+    // ---- performance strip
+    keyboard.setAvailableRange(21, 108);
+    keyboard.setLowestVisibleKey(36);
+    keyboard.setKeyPressBaseOctave(4);
+    keyboard.setScrollButtonWidth(22);
+    velSlider.setRange(1, 127, 1);
+    velSlider.setValue(settings().getIntValue("keyVelocity", 100), juce::dontSendNotification);
+    velSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 44, 24);
+    velSlider.setTooltip("How hard the on-screen keyboard plays");
+    auto applyVel = [this] {
+        keyboard.setVelocity(float(velSlider.getValue()) / 127.0f, false);
+        settings().setValue("keyVelocity", int(velSlider.getValue()));
+    };
+    velSlider.onValueChange = applyVel;
+    applyVel();
+    notesOffBtn.onClick = [this] { session.allNotesOff(); };
+    notesOffBtn.setTooltip("Stops any stuck notes on the QS");
+    keysBtn.setClickingTogglesState(true);
+    keysBtn.setToggleState(settings().getBoolValue("hideKeys", false), juce::dontSendNotification);
+    keysBtn.setButtonText(keysBtn.getToggleState() ? "Show keyboard" : "Hide keyboard");
+    keysBtn.onClick = [this] {
+        settings().setValue("hideKeys", keysBtn.getToggleState());
+        keysBtn.setButtonText(keysBtn.getToggleState() ? "Show keyboard" : "Hide keyboard");
+        resized();
+    };
+    statusLabel.setColour(juce::Label::textColourId, theme::dim);
+    statusLabel.setFont(theme::uiFont(13.0f));
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&keyboard, &perf, &velLabel, &velSlider, &notesOffBtn, &keysBtn, &statusLabel})
+        addAndMakeVisible(c);
+
+    applyLook();
+    updatePill();
+    setSize(1400, 940);
+    connection->onPortsChanged = [this] { updatePill(); };
+    connection->connectSaved();
+    showPage(session.midi.isOpen() ? 0 : 6);  // not connected yet: start on Connection
 }
 
 void MainComponent::fillControllerBox() {
@@ -586,6 +489,42 @@ MainComponent::~MainComponent() {
     session.midi.removeListener(this);
     session.openInEditor = nullptr;
     session.setStatus = nullptr;
+    for (auto& p : pages) removeChildComponent(p.comp);
+}
+
+void MainComponent::showPage(int index) {
+    if (index < 0 || index >= int(pages.size())) return;
+    if (current >= 0) pages[size_t(current)].comp->setVisible(false);
+    current = index;
+    auto& p = pages[size_t(index)];
+    p.comp->setVisible(true);
+    sidebar.setSelected(index);
+    header.set(p.title, p.summary, p.help);
+    resized();
+}
+
+void MainComponent::applyLook() {
+    const int look = lookBox.getSelectedId();
+    const auto model = session.deviceName.isNotEmpty() ? session.deviceName : settings().getValue("lastModel", "QSR");
+    const bool qs6 = look == 2 || (look == 1 && looksLikeQs6(model));
+    theme::applyStyle(qs6 ? theme::Style::QS6 : theme::Style::QSR);
+    if (auto* lf = dynamic_cast<theme::LookAndFeel*>(&juce::LookAndFeel::getDefaultLookAndFeel())) lf->refresh();
+    sendLookAndFeelChange();
+    if (library) {
+        library->refresh();
+        library->resized();
+    }
+    repaint();
+    for (auto& p : pages) p.comp->repaint();
+}
+
+void MainComponent::updatePill() {
+    if (!session.midi.isOpen())
+        pill.set(false, "Not connected: click to set up");
+    else if (session.deviceName.isEmpty())
+        pill.set(false, "MIDI open, no answer from the QS yet");
+    else
+        pill.set(true, "Connected to " + session.deviceName.replace(" v", ", OS "));
 }
 
 void MainComponent::sysexReceived(const qs::Bytes& msg) {
@@ -593,51 +532,77 @@ void MainComponent::sysexReceived(const qs::Bytes& msg) {
         session.deviceName = juce::String(d->model) + " v" + juce::String(d->version);
         settings().setValue("lastModel", juce::String(d->model));
         statusLabel.setText("Connected to " + session.deviceName, juce::dontSendNotification);
-        // Factory names for empty Preset/GenMIDI banks, if the user pointed us at the factory files before.
         session.programModeSent = false;
         library->applySavedImports(true);  // fill empty banks from the .syx folder the user imported before
         perf.updateLayout();
+        applyLook();
+        updatePill();
         resized();
         session.midi.send(qs::globalRequest());  // controller numbers and Program Select
+        if (current == 6) juce::Timer::callAfterDelay(1200, [this] { showPage(0); });  // connected: go play
         return;
     }
     if (auto g = qs::parseGlobalDump(msg)) {
         session.global = *g;
         session.globalKnown = true;
         perf.updateLayout();
+        globalPage->refreshFromSession();
         if (g->programSelect == 0)
-            statusLabel.setText("Connected to " + session.deviceName +
-                                    ". Global > MIDI Program Select is OFF: the QS will ignore program changes from QS Studio. Set it to ON.",
+            statusLabel.setText("MIDI Program Select is OFF on the QS, so it ignores program changes. Turn it on in Global Settings.",
                                 juce::dontSendNotification);
     }
 }
 
 void MainComponent::paint(juce::Graphics& g) {
     g.fillAll(theme::bg);
+    g.setColour(theme::bezel);
+    g.fillRect(getLocalBounds().removeFromTop(56));
+    g.setColour(theme::accent);
+    g.fillRect(0, 54, getWidth(), 2);
+    const int stripH = keysBtn.getToggleState() ? 44 : 158;
     g.setColour(theme::panel);
-    g.fillRect(getLocalBounds().removeFromBottom(150));
+    g.fillRect(getLocalBounds().removeFromBottom(stripH));
+    g.setColour(theme::line);
+    g.drawHorizontalLine(getHeight() - stripH, 0.0f, float(getWidth()));
 }
 
 void MainComponent::resized() {
     auto r = getLocalBounds();
-    auto bottom = r.removeFromBottom(150).reduced(12, 8);
-    auto bar = bottom.removeFromTop(30);
-    chLabel.setBounds(bar.removeFromLeft(60));
-    channelBox.setBounds(bar.removeFromLeft(64).reduced(0, 2));
-    bar.removeFromLeft(16);
-    velLabel.setBounds(bar.removeFromLeft(64));
-    velSlider.setBounds(bar.removeFromLeft(220));
-    bar.removeFromLeft(16);
-    notesOffBtn.setBounds(bar.removeFromLeft(120).reduced(0, 1));
-    bar.removeFromLeft(16);
-    ctrlLabel.setBounds(bar.removeFromLeft(92));
-    controllerBox.setBounds(bar.removeFromLeft(220).reduced(0, 2));
+    auto top = r.removeFromTop(56).reduced(16, 11);
+    appTitle.setBounds(top.removeFromLeft(130));
+    top.removeFromLeft(10);
+    pill.setBounds(top.removeFromLeft(340));
+    controllerBox.setBounds(top.removeFromRight(210));
+    ctrlLabel.setBounds(top.removeFromRight(100));
+    top.removeFromRight(12);
+    channelBox.setBounds(top.removeFromRight(64));
+    chLabel.setBounds(top.removeFromRight(70));
+    top.removeFromRight(12);
+    lookBox.setBounds(top.removeFromRight(170));
+    lookLabel.setBounds(top.removeFromRight(90));
+
+    const bool hidden = keysBtn.getToggleState();
+    auto strip = r.removeFromBottom(hidden ? 44 : 158).reduced(12, 7);
+    auto bar = strip.removeFromTop(30);
+    keysBtn.setBounds(bar.removeFromLeft(130));
+    bar.removeFromLeft(12);
+    notesOffBtn.setBounds(bar.removeFromLeft(120));
+    bar.removeFromLeft(4);
+    velLabel.setBounds(bar.removeFromLeft(70));
+    velSlider.setBounds(bar.removeFromLeft(200));
     bar.removeFromLeft(16);
     statusLabel.setBounds(bar);
-    bottom.removeFromTop(6);
-    perf.setBounds(bottom.removeFromLeft(perf.preferredWidth()));
-    bottom.removeFromLeft(8);
-    keyboard.setBounds(bottom);
-    keyboard.setKeyWidth(juce::jmax(14.0f, float(bottom.getWidth() - 44) / 52.0f));  // about 52 white keys in view
-    tabs.setBounds(r);
+    perf.setVisible(!hidden);
+    keyboard.setVisible(!hidden);
+    if (!hidden) {
+        strip.removeFromTop(6);
+        perf.setBounds(strip.removeFromLeft(perf.preferredWidth()));
+        strip.removeFromLeft(8);
+        keyboard.setBounds(strip);
+        keyboard.setKeyWidth(juce::jmax(14.0f, float(strip.getWidth() - 44) / 52.0f));
+    }
+
+    sidebar.setBounds(r.removeFromLeft(230));
+    header.setBounds(r.removeFromTop(header.heightFor(r.getWidth())));
+    if (current >= 0) pages[size_t(current)].comp->setBounds(r);
 }

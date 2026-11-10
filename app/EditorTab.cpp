@@ -398,13 +398,13 @@ void EditorTab::sysexReceived(const qs::Bytes& msg) {
 }
 
 void EditorTab::getFromQs() {
-    if (!session.midi.isOpen()) { alert("Not connected", "Connect to the QS on the Device tab first."); return; }
+    if (!session.midi.isOpen()) { alert("Not connected", "Connect to the QS on the Connection page first."); return; }
     where = "QS edit buffer";
     requestEditBuffer(0);
 }
 
 void EditorTab::sendToQs() {
-    if (!session.midi.isOpen()) { alert("Not connected", "Connect to the QS on the Device tab first."); return; }
+    if (!session.midi.isOpen()) { alert("Not connected", "Connect to the QS on the Connection page first."); return; }
     flushNow();
     session.midi.send(qs::modeSelect(0));
     session.midi.send(prog.editDump());
@@ -412,7 +412,7 @@ void EditorTab::sendToQs() {
 }
 
 void EditorTab::storeToUser() {
-    if (!session.midi.isOpen()) { alert("Not connected", "Connect to the QS on the Device tab first."); return; }
+    if (!session.midi.isOpen()) { alert("Not connected", "Connect to the QS on the Connection page first."); return; }
     auto* w = new juce::AlertWindow("Store to User bank",
                                     "Store \"" + juce::String(prog.name()).trimEnd() + "\" into which User program?\n"
                                     "This overwrites that User program on the QS. Back up first with SysEx > Ask QS to Send All.",

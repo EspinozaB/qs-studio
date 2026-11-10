@@ -5,25 +5,32 @@ settings are saved next to the exe (`QSStudio.settings`).
 
 ## What it does
 
-| Tab | What it does |
+The window works like a hardware editor: pages in a sidebar grouped by job, a plain-language summary at the top of each page and a
+**How this works** button with step-by-step help. The look follows the synth: a QS6 gets a green LCD and the QS6 front panel
+(PROGRAM / EDIT SELECT / STORE, BANK and VALUE arrows, the 13 group buttons and 0-9); a QS7, QS8 or QSR gets the grey-blue LCD and the
+rack panel (PROG / EDIT / STORE, bank DOWN/UP, VALUE knob). Change it under **Panel look**.
+
+| Page | What it does |
 |---|---|
-| Library | Every bank (User, Preset 1-3, GenMIDI, Card A/B) with program names and search. Click or arrow through programs to select them on the QS; double-click to edit. **Read bank from QS** fills in names once; they are cached in `QSStudio.library` next to the exe. Load a .syx into a bank, send a program to the edit buffer, or store it to a User slot. |
-| Editor | All four sounds on one screen (group, sample, level, pan, effects, cutoff, attack, release, key mode, velocity curve, transpose) plus full pages for Voice, Pitch, Filter, Amp, Range, Mod, LFOs, Envelopes and Tracking, and every drum of a drum kit. Changes go to the QS live (opcode 10, or a full edit-buffer dump for drums and the name). Get/Send the edit buffer, Store to User, open/save .syx. |
-| Record | Records the QS through your audio interface to WAV (16/24-bit), with live monitoring so you can hear the inputs without a DAW. **Auto-sample notes** plays a note range at chosen velocities and saves one file per note. |
-| Device | Pick MIDI in/out, connect, identify the synth (model + OS version). |
-| SysEx Librarian | Record dumps, **Ask QS to Send All**, save/open `.syx`, check a backup is complete (357 parts), send `.syx` back. |
-| Card Tools | Open QCard / QuadraCard / Sound Bridge images, export WAVs or SFZ, test the card slot, read a card over MIDI, write an image to a FLASH card. **Dump internal sample ROM** saves the built-in samples to a .bin on units that answer card reads with their ROM (confirmed on a QSR: header `QS78ROM v2`); resumable, about 1 hour per 8 MB. Keep ROM dumps private. |
+| **Play** > Programs | Every bank (User, Preset 1-3, GenMIDI, card banks 1-11) with names and search, and the virtual front panel. Click, arrow or use the panel buttons to select programs on the QS; double-click or EDIT to edit. **Read this bank from QS** fills in names once; they are cached in `QSStudio.library` next to the exe. Audition a program in the edit buffer, store it to a User slot, or copy a bank onto a RAM card bank. |
+| **Edit** > Program Editor | All four sounds on one screen plus full pages for Voice, Pitch, Filter, Amp, Range, Mod, LFOs, Envelopes and Tracking, and every drum of a drum kit. Changes go to the QS live. Get/Send the edit buffer, Store to User, open/save .syx. |
+| **Transfer** > Backup & Restore | **Back up now** asks the QS for all User programs, mixes, effects and Global settings and saves one .syx (checked for all 357 parts). **Restore** previews a file and sends it back (Global only if you tick it). Manual capture for dumps started from the QS. |
+| **Transfer** > Move banks QS6 <-> QSR | Three steps: back up, convert, then restore or copy to a card. See below. |
+| **Transfer** > Cards & ROM | Open QCard / QuadraCard / Sound Bridge images and export WAVs or SFZ; test the card slot, read a FLASH card, write an image to a FLASH card. **Dump internal sample ROM** saves the built-in samples on units that answer card reads with their ROM (confirmed on a QSR); resumable, about 1 hour per 8 MB. Keep ROM dumps private. |
+| **Capture** > Record & Sample | Records the QS through your audio interface to WAV (16/24-bit) with live monitoring. **Auto-sample notes** plays a note range at chosen velocities and saves one file per note. |
+| **Setup** > Connection | Pick MIDI in/out; QS Studio reconnects at startup and asks the synth what it is (model + OS version). |
+| **Setup** > Global Settings | Read and edit Controller A-D and pedal CC numbers, MIDI Program Select and General MIDI mode on the QS, and try Controllers A-D (the QS6 only has the A slider). |
 
-The bar along the bottom plays the QS on the chosen MIDI channel: keyboard (your computer keys work too), pitch wheel, mod wheel,
-Controller A (A-D on models with four sliders) and volume. Controller numbers are read from the QS Global settings after Identify.
+The strip along the bottom plays the QS on the chosen MIDI channel: keyboard (your computer keys work too), pitch wheel, mod wheel,
+Controller A (A-D on models with four sliders) and volume. **Hide keyboard** folds it away.
 
-**Names for every bank:** Library > **Read all banks from QS** reads User, Preset 1-3 and GenMIDI straight from the synth (a few minutes, once).
+**Names for every bank:** Programs > **Read all banks from QS** reads User, Preset 1-3 and GenMIDI straight from the synth (a few minutes, once).
 Or **Import a folder of .syx banks** and choose which file fills which bank (the Alesis factory `Q678PST1`-`4` files from the
 [Alesis Archive Project](https://github.com/jzemeocala/Alesis-Archive-Project/tree/HEAD/BANKS/FACTORY) are matched automatically).
-Imports only change QS Studio's list; to write a bank to the synth use the SysEx Librarian. No Alesis data ships with QS Studio.
+Imports only change QS Studio's list; to write a bank to the synth use Backup & Restore. No Alesis data ships with QS Studio.
 
 **QS6 and QS7/QS8/QSR banks:** the QS6 has its own sample ROM; the QS7, QS8 and QSR share another. A program stores only a sample
-group and number, so a QS6 program can play a different sample on a QSR. Library > **Convert a bank file QS6 <-> QSR** rewrites each
+group and number, so a QS6 program can play a different sample on a QSR. **Move banks QS6 <-> QSR** (or Programs > **Convert a bank file**) rewrites each
 program to the same-named sample on the other model (exact, or a close name such as GrandPiano -> GrndPianoL) and writes a report of
 every change and every sample with no match. Sample tables come from the sample charts in the Alesis reference manuals
 (`tools/gen_samples.py`); the QS7/QS8 chart was checked against a QSR's ROM directory. The QS6 chart is unverified until a QS6 ROM is read.

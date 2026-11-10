@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(QSStudio VERSION 0.7.0 LANGUAGES C CXX)
+project(QSStudio VERSION 0.8.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -26,7 +26,7 @@ if(QS_BUILD_APP)
         COMPANY_NAME "QS Studio"
         VERSION ${PROJECT_VERSION})
     juce_generate_juce_header(QSStudio)
-    target_sources(QSStudio PRIVATE app/Main.cpp app/MainComponent.cpp app/LibraryTab.cpp app/EditorTab.cpp app/RecorderTab.cpp)
+    target_sources(QSStudio PRIVATE app/Main.cpp app/MainComponent.cpp app/LibraryTab.cpp app/EditorTab.cpp app/RecorderTab.cpp app/Pages.cpp)
     target_compile_definitions(QSStudio PRIVATE
         JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
         JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:QSStudio,JUCE_PRODUCT_NAME>"

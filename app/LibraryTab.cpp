@@ -201,7 +201,20 @@ private:
 }  // namespace
 
 LibraryTab::LibraryTab(Session& s) : session(s) {
-    addAndMakeVisible(lcd);
+    FrontPanel::Actions act;
+    act.selectProgram = [this](int p) { selectProgram(p); };
+    act.stepBank = [this](int d) {
+        const int b = juce::jlimit(0, int(kBanks.size()) - 1, bank + d);
+        if (b == bank) return;
+        const int p = selectedProgram();
+        showBank(b);
+        selectProgram(p);
+    };
+    act.edit = [this] { openInEditor(selectedProgram()); };
+    act.store = [this] { storeToUser(); };
+    act.currentProgram = [this] { return selectedProgram(); };
+    panel = std::make_unique<FrontPanel>(lcd, act);
+    addAndMakeVisible(*panel);
     const char* mainBanks[] = {"User", "Preset 1", "Preset 2", "Preset 3", "GenMIDI", "Card"};
     for (int b = 0; b < 6; ++b) {
         auto* btn = bankButtons.add(new juce::TextButton(mainBanks[b]));
@@ -256,8 +269,8 @@ LibraryTab::LibraryTab(Session& s) : session(s) {
     importFolderBtn.setTooltip("Fills banks here from .syx files in a folder (for example the Alesis factory banks). "
                                "You choose which file goes to which bank. Only QS Studio's list changes; nothing is sent to the QS.");
     importOneBtn.setTooltip("Fills the bank shown here from one .syx file, so you can browse its names and open its programs in the editor. "
-                            "Only QS Studio's list changes; nothing is sent to the QS. To write a bank to the QS, use the SysEx Librarian tab.");
-    editBtn.setTooltip("Selects the program on the QS and loads it into the Editor tab (Enter or double-click does the same).");
+                            "Only QS Studio's list changes; nothing is sent to the QS. To write a bank to the QS, use Backup & Restore.");
+    editBtn.setTooltip("Selects the program on the QS and loads it into the Program Editor (Enter or double-click does the same).");
     sendBtn.setTooltip("Plays this program on the QS by sending it to the edit buffer. Nothing is stored; selecting another program discards it.");
     storeBtn.setTooltip("Saves this program permanently into one of the QS's 128 User program slots, replacing what was there. "
                         "Use it to copy a Preset or card program into your User bank.");
@@ -319,13 +332,27 @@ void LibraryTab::rebuildRows() {
     sourceLabel.setText(text, juce::dontSendNotification);
 }
 
+void LibraryTab::selectProgram(int prog) {
+    auto it = std::find(rows.begin(), rows.end(), prog);
+    if (it == rows.end() && search.getText().isNotEmpty()) {
+        search.clear();
+        rebuildRows();
+        it = std::find(rows.begin(), rows.end(), prog);
+    }
+    if (it == rows.end()) return;
+    const int r = int(it - rows.begin());
+    list.selectRow(r);
+    list.scrollToEnsureRowIsOnscreen(r);
+}
+
 void LibraryTab::updateLcd() {
+    if (panel) panel->sync();
     const auto name = session.library.nameOf(session.currentBank, session.currentProgram);
     lcd.setLines(name.isNotEmpty() ? name : juce::String("Program ") + juce::String(session.currentProgram).paddedLeft('0', 3),
                  {"BANK: " + bankTitle(session.currentBank).toUpperCase() + "   PROG " + juce::String(session.currentProgram).paddedLeft('0', 3) +
                       "   CH " + juce::String(session.channel).paddedLeft('0', 2),
                   session.midi.isOpen() ? (session.deviceName.isNotEmpty() ? session.deviceName : juce::String("MIDI connected"))
-                                        : juce::String("NOT CONNECTED: see the Device tab")});
+                                        : juce::String("NOT CONNECTED: see Connection")});
 }
 
 int LibraryTab::selectedProgram() const {
@@ -359,6 +386,7 @@ void LibraryTab::paintListBoxItem(int row, juce::Graphics& g, int w, int h, bool
 void LibraryTab::selectedRowsChanged(int row) {
     if (suppressSend || row < 0 || row >= int(rows.size())) return;
     pendingSelect = rows[size_t(row)];
+    if (panel) panel->sync();
     startTimer(90);  // debounce while arrowing through the list
 }
 
@@ -397,7 +425,7 @@ bool LibraryTab::keyPressed(const juce::KeyPress& k) {
 
 void LibraryTab::readBanks(std::vector<int> banks) {
     if (!session.midi.isOpen()) {
-        alert("Not connected", "Connect to the QS on the Device tab first.");
+        alert("Not connected", "Connect to the QS on the Connection page first.");
         return;
     }
     (new ReadBanksJob(session, std::move(banks), [this](juce::String result) {
@@ -521,7 +549,7 @@ void LibraryTab::sendCachedToEditBuffer() {
         return;
     }
     if (!session.midi.isOpen()) {
-        alert("Not connected", "Connect to the QS on the Device tab first.");
+        alert("Not connected", "Connect to the QS on the Connection page first.");
         return;
     }
     session.midi.send(qs::modeSelect(0));
@@ -538,7 +566,7 @@ void LibraryTab::storeToUser() {
         return;
     }
     if (!session.midi.isOpen()) {
-        alert("Not connected", "Connect to the QS on the Device tab first.");
+        alert("Not connected", "Connect to the QS on the Connection page first.");
         return;
     }
     auto* w = new juce::AlertWindow("Store to User bank",
@@ -566,7 +594,7 @@ void LibraryTab::storeToUser() {
 
 void LibraryTab::copyBankToCard() {
     if (!session.midi.isOpen()) {
-        alert("Not connected", "Connect to the QS on the Device tab first.");
+        alert("Not connected", "Connect to the QS on the Connection page first.");
         return;
     }
     const int cardBank = bank;
@@ -735,15 +763,14 @@ void LibraryTab::convertBankFile() {
 void LibraryTab::paint(juce::Graphics& g) {
     g.fillAll(theme::bg);
     auto r = getLocalBounds().reduced(14);
-    r.removeFromTop(150);
+    r.removeFromTop(panel->preferredHeight() + 6);
     theme::drawCaption(g, r.removeFromTop(18).removeFromLeft(140), "Bank", juce::Justification::centredLeft);
 }
 
 void LibraryTab::resized() {
     auto r = getLocalBounds().reduced(14);
-    auto top = r.removeFromTop(140);
-    lcd.setBounds(top.removeFromLeft(juce::jmin(620, top.getWidth())));
-    r.removeFromTop(28);
+    panel->setBounds(r.removeFromTop(panel->preferredHeight()));
+    r.removeFromTop(26);
     auto left = r.removeFromLeft(150);
     for (auto* b : bankButtons) {
         b->setBounds(left.removeFromTop(38));
