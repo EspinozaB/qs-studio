@@ -221,6 +221,11 @@ EditorTab::EditorTab(Session& s) : session(s) {
     for (juce::Component* c : std::initializer_list<juce::Component*>{&liveToggle, &getBtn, &sendBtn, &storeBtn, &openBtn, &saveBtn})
         addAndMakeVisible(c);
     addChildComponent(backBtn);
+    getBtn.setTooltip("Loads whatever program the QS is playing right now (its edit buffer).");
+    sendBtn.setTooltip("Sends this program to the QS edit buffer so you hear it. Not stored: switching programs on the QS discards it.");
+    storeBtn.setTooltip("Saves this program permanently into one of the QS's 128 User program slots, replacing what was there.");
+    openBtn.setTooltip("Opens a program from a .syx file on your computer.");
+    saveBtn.setTooltip("Saves this program as a .syx file on your computer.");
     getBtn.onClick = [this] { getFromQs(); };
     sendBtn.onClick = [this] { sendToQs(); };
     storeBtn.onClick = [this] { storeToUser(); };
@@ -254,11 +259,19 @@ EditorTab::~EditorTab() { session.midi.removeListener(this); }
 void EditorTab::openProgram(const qs::Program& p, const juce::String& w) {
     prog = p;
     where = w;
-    awaitingDump = session.midi.isOpen();
-    awaitingSince = juce::Time::getMillisecondCounter();
     pending.clear();
     dumpDirty = false;
+    awaitingDump = false;
+    if (session.midi.isOpen() && !w.endsWith("(offline copy)") && !w.endsWithIgnoreCase(".syx")) requestEditBuffer(300);
     loadAll();
+}
+
+// Ask the QS for its edit buffer, repeating a few times: right after a program change the QS can miss the request.
+void EditorTab::requestEditBuffer(int firstDelayMs) {
+    awaitingDump = true;
+    requestsSent = 0;
+    nextRequestAt = juce::Time::getMillisecondCounter() + juce::uint32(juce::jmax(0, firstDelayMs));
+    updateLcd();
 }
 
 void EditorTab::loadAll() {
@@ -311,9 +324,18 @@ void EditorTab::setEnabled(int sound, bool on) {
 }
 
 void EditorTab::timerCallback() {
-    if (awaitingDump && juce::Time::getMillisecondCounter() - awaitingSince > 4000) {
-        awaitingDump = false;
-        updateLcd();
+    const auto now = juce::Time::getMillisecondCounter();
+    if (awaitingDump && now >= nextRequestAt) {
+        if (requestsSent < 4 && session.midi.isOpen()) {
+            session.midi.send(qs::editProgramRequest(0));
+            ++requestsSent;
+            nextRequestAt = now + 900;
+        } else {
+            awaitingDump = false;
+            updateLcd();
+            if (session.setStatus)
+                session.setStatus("The QS didn't send its edit buffer. Check that it's in Program mode and that both MIDI cables are connected.");
+        }
     }
     if (!liveToggle.getToggleState() || !session.midi.isOpen()) return;
     if (dumpDirty && juce::Time::getMillisecondCounter() - lastDumpEdit > 250) {
@@ -345,10 +367,7 @@ void EditorTab::sysexReceived(const qs::Bytes& msg) {
 void EditorTab::getFromQs() {
     if (!session.midi.isOpen()) { alert("Not connected", "Connect to the QS on the Device tab first."); return; }
     where = "QS edit buffer";
-    awaitingDump = true;
-    awaitingSince = juce::Time::getMillisecondCounter();
-    session.midi.send(qs::editProgramRequest(0));
-    updateLcd();
+    requestEditBuffer(0);
 }
 
 void EditorTab::sendToQs() {
@@ -404,8 +423,6 @@ void EditorTab::openSyx() {
         for (auto& m : qs::splitSysex(qs::Bytes(ptr, ptr + mb.getSize())))
             if (auto p = qs::Program::fromDump(m)) {
                 openProgram(*p, f.getFileName());
-                awaitingDump = false;
-                updateLcd();
                 return;
             }
         alert("No program", f.getFileName() + " has no QS program in it.");

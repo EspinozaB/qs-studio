@@ -6,74 +6,109 @@ void alert(const juce::String& title, const juce::String& msg) {
     juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, title, msg);
 }
 
-// Reads all 128 programs of one bank. User: opcode 01 per program. Other banks: select each program
-// (bank select + program change) and request the edit buffer (opcode 03), which needs MIDI Program Select ON.
-class ReadBankJob : public juce::ThreadWithProgressWindow {
+juce::String bankTitle(int b) { return kBanks[size_t(b)].title; }
+
+// Reads every program of one or more banks.
+// User: opcode 01 per program (fast). Other banks: program change, then ask for the edit buffer (opcode 03).
+// The QS needs a moment to load a program; if the answer is still the previous program, ask again.
+class ReadBanksJob : public juce::ThreadWithProgressWindow {
 public:
-    ReadBankJob(Session& s, int b, std::function<void(juce::String)> done)
-        : ThreadWithProgressWindow("Reading " + juce::String(kBanks[size_t(b)].title) + " from the QS", true, true),
-          session(s), bank(b), onDone(std::move(done)) {}
+    ReadBanksJob(Session& s, std::vector<int> b, std::function<void(juce::String)> done)
+        : ThreadWithProgressWindow("Reading from the QS", true, true), session(s), banks(std::move(b)), onDone(std::move(done)) {}
 
     void run() override {
         auto& midi = session.midi;
-        midi.clearQueue();
-        int got = 0;
-        if (bank != 0) midi.send(qs::modeSelect(0));
-        for (int p = 0; p < 128 && !threadShouldExit(); ++p) {
-            std::optional<qs::Bytes> reply;
-            for (int attempt = 0; attempt < 2 && !reply && !threadShouldExit(); ++attempt) {
+        const int total = int(banks.size()) * 128;
+        int doneCount = 0;
+        if (std::any_of(banks.begin(), banks.end(), [](int b) { return b != 0; })) {
+            midi.send(qs::modeSelect(0));
+            session.programModeSent = true;
+            wait(100);
+        }
+        for (int bank : banks) {
+            if (threadShouldExit()) break;
+            auto& out = results[bank];
+            int got = 0, sameAsPrevious = 0;
+            std::optional<qs::Program> prev;
+            for (int p = 0; p < 128 && !threadShouldExit(); ++p) {
+                setStatusMessage(bankTitle(bank) + ": program " + juce::String(p + 1) + " of 128");
+                std::optional<qs::Program> prog;
                 if (bank == 0) {
-                    midi.send({0xF0, 0x00, 0x00, 0x0E, 0x0E, qs::UserProgramRequest, uint8_t(p), 0xF7});
-                    reply = midi.waitFor([p](const qs::Bytes& m) { return qs::opcodeOf(m) == qs::UserProgramDump && m.size() > 6 && m[6] == p; },
-                                         2000, this);
+                    for (int attempt = 0; attempt < 3 && !prog && !threadShouldExit(); ++attempt) {
+                        midi.send({0xF0, 0x00, 0x00, 0x0E, 0x0E, qs::UserProgramRequest, uint8_t(p), 0xF7});
+                        if (auto r = midi.waitFor([p](const qs::Bytes& m) { return qs::opcodeOf(m) == qs::UserProgramDump && m.size() > 6 && m[6] == p; },
+                                                  1500, this))
+                            prog = qs::Program::fromDump(*r);
+                    }
                 } else {
                     midi.sendMidi(juce::MidiMessage::controllerEvent(session.channel, 0, kBanks[size_t(bank)].cc0));
                     midi.sendMidi(juce::MidiMessage::programChange(session.channel, p));
-                    wait(250);  // let the QS load the program before asking for the edit buffer
-                    midi.clearQueue();
-                    midi.send(qs::editProgramRequest(0));
-                    reply = midi.waitFor([](const qs::Bytes& m) { return qs::opcodeOf(m) == qs::EditProgramDump; }, 2000, this);
+                    wait(60);
+                    for (int attempt = 0; attempt < 4 && !threadShouldExit(); ++attempt) {
+                        midi.clearQueue();
+                        midi.send(qs::editProgramRequest(0));
+                        auto r = midi.waitFor([](const qs::Bytes& m) { return qs::opcodeOf(m) == qs::EditProgramDump; }, 1500, this);
+                        if (!r) continue;
+                        prog = qs::Program::fromDump(*r);
+                        // Still the previous program? The QS hadn't switched yet: wait and ask again.
+                        if (prog && prev && p > 0 && prog->bytes() == prev->bytes() && attempt < 3) {
+                            wait(150);
+                            continue;
+                        }
+                        break;
+                    }
+                    if (prog && prev && prog->bytes() == prev->bytes()) ++sameAsPrevious;
                 }
-            }
-            if (!reply) {
-                if (threadShouldExit()) break;
-                result = got == 0 ? juce::String("The QS did not answer. Check both MIDI cables and the Device tab connection.") +
-                                        (bank == 0 ? "" : "\nFor Preset, GenMIDI and card banks, set Global > MIDI Program Select to ON "
-                                                          "and make sure the MIDI channel below matches the QS.")
-                                  : "The QS stopped answering at program " + juce::String(p) + ".";
-                break;
-            }
-            if (auto prog = qs::Program::fromDump(*reply)) {
-                read[size_t(p)] = prog;
+                if (!prog) {
+                    if (threadShouldExit()) break;
+                    problems.add(got == 0 ? bankTitle(bank) + ": the QS did not answer." + (bank == 0 ? juce::String() : programSelectHint())
+                                          : bankTitle(bank) + ": the QS stopped answering at program " + juce::String(p) + ".");
+                    break;
+                }
+                // Every program identical: the QS is ignoring program changes.
+                if (p == 3 && sameAsPrevious >= 3) {
+                    problems.add(bankTitle(bank) + ": every program came back the same, so the QS isn't switching programs." + programSelectHint());
+                    out = {};
+                    got = 0;
+                    break;
+                }
+                out[size_t(p)] = prog;
+                prev = prog;
                 ++got;
+                setProgress(double(++doneCount) / total);
             }
-            setProgress(double(p + 1) / 128.0);
-            setStatusMessage("Program " + juce::String(p + 1) + " of 128" +
-                             (read[size_t(p)] ? ":  " + juce::String(read[size_t(p)]->name()).trimEnd() : juce::String()));
+            counts[bank] = got;
         }
-        if (result.isEmpty()) result = "Read " + juce::String(got) + " of 128 programs" + (threadShouldExit() ? " (cancelled)." : ".");
     }
 
     void threadComplete(bool) override {
-        int got = 0;
-        for (size_t p = 0; p < 128; ++p)
-            if (read[p]) {
-                session.library.programs[size_t(bank)][p] = read[p];
-                ++got;
+        juce::StringArray summary;
+        for (int bank : banks) {
+            const int got = counts[bank];
+            if (got > 0) {
+                for (size_t p = 0; p < 128; ++p)
+                    if (results[bank][p]) session.library.programs[size_t(bank)][p] = results[bank][p];
+                session.library.source[size_t(bank)] = "your " + (session.deviceName.isNotEmpty() ? session.deviceName : juce::String("QS")) +
+                                                       " (read " + juce::Time::getCurrentTime().formatted("%Y-%m-%d") + ")";
             }
-        if (got > 0)
-            session.library.source[size_t(bank)] = "your " + (session.deviceName.isNotEmpty() ? session.deviceName : juce::String("QS")) +
-                                                   " (read " + juce::Time::getCurrentTime().formatted("%Y-%m-%d") + ")";
+            summary.add(bankTitle(bank) + ": " + juce::String(got) + " of 128");
+        }
         session.library.save();
-        if (onDone) onDone(result);
+        if (onDone) onDone(summary.joinIntoString(", ") + (problems.isEmpty() ? "" : "\n\n" + problems.joinIntoString("\n")));
         delete this;
     }
 
 private:
+    static juce::String programSelectHint() {
+        return "\nCheck that Global > MIDI Program Select is ON and the MIDI channel in QS Studio matches the QS. "
+               "Card banks only answer when a card with that many banks is inserted.";
+    }
+
     Session& session;
-    int bank;
-    std::array<std::optional<qs::Program>, 128> read;
-    juce::String result;
+    std::vector<int> banks;
+    std::map<int, std::array<std::optional<qs::Program>, 128>> results;
+    std::map<int, int> counts;
+    juce::StringArray problems;
     std::function<void(juce::String)> onDone;
 };
 
@@ -81,15 +116,23 @@ private:
 
 LibraryTab::LibraryTab(Session& s) : session(s) {
     addAndMakeVisible(lcd);
-    for (size_t b = 0; b < kBanks.size(); ++b) {
-        auto* btn = bankButtons.add(new juce::TextButton(kBanks[b].title));
-        btn->setClickingTogglesState(false);
-        btn->onClick = [this, b] { showBank(int(b)); };
+    const char* mainBanks[] = {"User", "Preset 1", "Preset 2", "Preset 3", "GenMIDI", "Card"};
+    for (int b = 0; b < 6; ++b) {
+        auto* btn = bankButtons.add(new juce::TextButton(mainBanks[b]));
+        btn->onClick = [this, b] { showBank(b < 5 ? b : kFirstCardBank + cardBankBox.getSelectedId() - 1); };
         addAndMakeVisible(btn);
     }
+    bankButtons[5]->setTooltip("Banks on the inserted card(s). A RAM512 has 8 banks; a sound QCard usually has 1.");
+    for (int i = 1; i <= 11; ++i) cardBankBox.addItem("Card bank " + juce::String(i), i);
+    cardBankBox.setSelectedId(1, juce::dontSendNotification);
+    cardBankBox.onChange = [this] { showBank(kFirstCardBank + cardBankBox.getSelectedId() - 1); };
+    cardBankBox.setTooltip("Card banks are numbered across both slots. With no card inserted the QS ignores these and stays where it was.");
+    addAndMakeVisible(cardBankBox);
+
     search.setTextToShowWhenEmpty("Search names...", theme::dim);
     search.onTextChange = [this] { rebuildRows(); };
     search.setFont(theme::uiFont(15.0f));
+    search.setIndents(8, 7);
     addAndMakeVisible(search);
 
     list.setRowHeight(26);
@@ -98,32 +141,37 @@ LibraryTab::LibraryTab(Session& s) : session(s) {
     list.setWantsKeyboardFocus(true);
     addAndMakeVisible(list);
 
-    for (juce::Component* c : std::initializer_list<juce::Component*>{&prevBtn, &nextBtn, &readBtn, &loadBtn, &editBtn, &sendBtn, &storeBtn,
-                                                                    &factoryBtn, &factoryLink, &hint, &sourceLabel})
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&prevBtn, &nextBtn, &readBtn, &readAllBtn, &importFolderBtn, &importOneBtn,
+                                                                    &editBtn, &sendBtn, &storeBtn, &factoryLink, &sourceLabel})
         addAndMakeVisible(c);
-    factoryBtn.onClick = [this] { loadFactoryBanks(); };
-    factoryBtn.setTooltip("Pick the folder with the Alesis factory .syx files (Q678PST1-4). Fills Preset 1-3 and GenMIDI names instantly.");
+    prevBtn.onClick = [this] { step(-1); };
+    nextBtn.onClick = [this] { step(1); };
+    readBtn.onClick = [this] { readBanks({bank}); };
+    readAllBtn.onClick = [this] { readBanks({0, 1, 2, 3, 4}); };
+    importFolderBtn.onClick = [this] { importFolder(); };
+    importOneBtn.onClick = [this] { importOneSyx(); };
+    editBtn.onClick = [this] { openInEditor(selectedProgram()); };
+    sendBtn.onClick = [this] { sendCachedToEditBuffer(); };
+    storeBtn.onClick = [this] { storeToUser(); };
+
+    prevBtn.setTooltip("Previous program");
+    nextBtn.setTooltip("Next program");
+    readBtn.setTooltip("Asks the QS for every program in the bank shown, so the names appear here. Takes about 40 seconds for a Preset bank. "
+                       "Names are kept in QSStudio.library, so you only do this once.");
+    readAllBtn.setTooltip("Reads User, Preset 1-3 and GenMIDI in one go (a few minutes). Nothing on the QS is changed.");
+    importFolderBtn.setTooltip("Fills banks here from .syx files in a folder (for example the Alesis factory banks). "
+                               "You choose which file goes to which bank. Only QS Studio's list changes; nothing is sent to the QS.");
+    importOneBtn.setTooltip("Fills the bank shown here from one .syx file, so you can browse its names and open its programs in the editor. "
+                            "Only QS Studio's list changes; nothing is sent to the QS. To write a bank to the QS, use the SysEx Librarian tab.");
+    editBtn.setTooltip("Selects the program on the QS and loads it into the Editor tab (Enter or double-click does the same).");
+    sendBtn.setTooltip("Plays this program on the QS by sending it to the edit buffer. Nothing is stored; selecting another program discards it.");
+    storeBtn.setTooltip("Saves this program permanently into one of the QS's 128 User program slots, replacing what was there. "
+                        "Use it to copy a Preset or card program into your User bank.");
     factoryLink.setColour(juce::HyperlinkButton::textColourId, theme::accent);
     factoryLink.setFont(theme::uiFont(13.0f), false, juce::Justification::centredLeft);
     sourceLabel.setFont(theme::uiFont(13.0f));
     sourceLabel.setColour(juce::Label::textColourId, theme::dim);
-    prevBtn.onClick = [this] { step(-1); };
-    nextBtn.onClick = [this] { step(1); };
-    readBtn.onClick = [this] { readBank(); };
-    loadBtn.onClick = [this] { loadSyxIntoBank(); };
-    editBtn.onClick = [this] { openInEditor(selectedProgram()); };
-    sendBtn.onClick = [this] { sendCachedToEditBuffer(); };
-    storeBtn.onClick = [this] { storeToUser(); };
-    editBtn.setToggleState(false, juce::dontSendNotification);
-
-    hint.setColour(juce::Label::textColourId, theme::dim);
-    hint.setFont(theme::uiFont(13.0f));
-    hint.setJustificationType(juce::Justification::topLeft);
-    hint.setText("Click a program to select it on the QS. Arrow keys step through programs. Double-click opens it in the editor.\n\n"
-                 "Names show once a bank is read from the QS (or loaded from a .syx). They are kept in QSStudio.library "
-                 "next to the exe, so each bank only needs reading once.\n\n"
-                 "Preset, GenMIDI and card banks need Global > MIDI Program Select set to ON on the QS.",
-                 juce::dontSendNotification);
+    sourceLabel.setJustificationType(juce::Justification::topLeft);
 
     session.currentProgramChanged = [this](int, int) { updateLcd(); };
     showBank(juce::jlimit(0, int(kBanks.size()) - 1, settings().getIntValue("libraryBank", 0)));
@@ -134,7 +182,10 @@ LibraryTab::~LibraryTab() { session.currentProgramChanged = nullptr; }
 void LibraryTab::showBank(int b) {
     bank = b;
     settings().setValue("libraryBank", b);
-    for (int i = 0; i < bankButtons.size(); ++i) bankButtons[i]->setToggleState(i == b, juce::dontSendNotification);
+    if (b >= kFirstCardBank) cardBankBox.setSelectedId(b - kFirstCardBank + 1, juce::dontSendNotification);
+    for (int i = 0; i < bankButtons.size(); ++i)
+        bankButtons[i]->setToggleState(i < 5 ? i == b : b >= kFirstCardBank, juce::dontSendNotification);
+    readBtn.setButtonText("Read " + bankTitle(b) + " from QS");
     rebuildRows();
     updateLcd();
 }
@@ -151,51 +202,33 @@ void LibraryTab::rebuildRows() {
         if (q.isEmpty() || session.library.nameOf(bank, p).containsIgnoreCase(q) || juce::String(p) == q) rows.push_back(p);
     list.updateContent();
     list.repaint();
-    // keep the current program highlighted when it is in view
     suppressSend = true;
     list.deselectAllRows();
     if (session.currentBank == bank)
         for (size_t i = 0; i < rows.size(); ++i)
             if (rows[i] == session.currentProgram) list.selectRow(int(i));
     suppressSend = false;
-    const int n = session.library.countRead(bank);
-    readBtn.setButtonText(n == 0 ? "Read bank from QS" : "Re-read bank from QS");
-    const auto& src = session.library.source[size_t(bank)];
-    if (n == 0)
-        sourceLabel.setText("No names yet. Read this bank from the QS" + juce::String(bank >= 1 && bank <= 4 ? ", or load the factory banks." : "."),
-                            juce::dontSendNotification);
-    else if (session.library.isFactorySource(bank))
-        sourceLabel.setText("Names from " + src.fromFirstOccurrenceOf("Factory file ", false, false) +
-                                ". These are the factory programs; if this bank was changed on your QS (or it's a different model), "
-                                "Re-read bank from QS to be sure.",
-                            juce::dontSendNotification);
-    else
-        sourceLabel.setText(src.isNotEmpty() ? "Names from " + src + "." : juce::String(n) + " of 128 programs known.", juce::dontSendNotification);
-}
 
-void LibraryTab::loadFactoryBanks() {
-    chooser = std::make_unique<juce::FileChooser>("Folder with the Alesis factory bank .syx files (Q678PST1-4)",
-                                                  juce::File(settings().getValue("factoryFolder", settingsDir().getFullPathName())));
-    chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories, [this](const juce::FileChooser& fc) {
-        auto dir = fc.getResult();
-        if (!dir.isDirectory()) return;
-        const int n = session.library.loadFactoryFolder(dir, false);
-        if (n == 0) {
-            alert("No factory banks found", "That folder has no .syx files with PST1, PST2, PST3 or PST4 in the name.");
-            return;
-        }
-        settings().setValue("factoryFolder", dir.getFullPathName());
-        settings().saveIfNeeded();
-        refresh();
-        if (session.setStatus) session.setStatus("Loaded " + juce::String(n) + " factory banks. They'll fill empty banks automatically next time.");
-    });
+    const int n = session.library.countRead(bank);
+    const auto& src = session.library.source[size_t(bank)];
+    juce::String text;
+    if (n == 0)
+        text = "No names for " + bankTitle(bank) + " yet. Click \"Read " + bankTitle(bank) + " from QS\"" +
+               (bank >= 1 && bank <= 4 ? juce::String(", or import the Alesis factory banks.") : juce::String("."));
+    else if (src.startsWith("your "))
+        text = "Names read from " + src + ".";
+    else if (src.isNotEmpty())
+        text = "Names imported from " + src + ". If this bank on your QS has been changed, read it from the QS to be sure they match.";
+    else
+        text = juce::String(n) + " of 128 programs known.";
+    sourceLabel.setText(text, juce::dontSendNotification);
 }
 
 void LibraryTab::updateLcd() {
     const auto name = session.library.nameOf(session.currentBank, session.currentProgram);
     lcd.setLines(name.isNotEmpty() ? name : juce::String("Program ") + juce::String(session.currentProgram).paddedLeft('0', 3),
-                 {"BANK: " + juce::String(kBanks[size_t(session.currentBank)].title).toUpperCase() + "   PROG " +
-                      juce::String(session.currentProgram).paddedLeft('0', 3) + "   CH " + juce::String(session.channel).paddedLeft('0', 2),
+                 {"BANK: " + bankTitle(session.currentBank).toUpperCase() + "   PROG " + juce::String(session.currentProgram).paddedLeft('0', 3) +
+                      "   CH " + juce::String(session.channel).paddedLeft('0', 2),
                   session.midi.isOpen() ? (session.deviceName.isNotEmpty() ? session.deviceName : juce::String("MIDI connected"))
                                         : juce::String("NOT CONNECTED: see the Device tab")});
 }
@@ -215,14 +248,13 @@ void LibraryTab::paintListBoxItem(int row, juce::Graphics& g, int w, int h, bool
         g.setColour(theme::panelHi.withAlpha(0.35f));
         g.fillRect(0, 0, w, h);
     }
-    // QS groups programs in tens: show the group digit apart from the number, like the front panel.
     g.setFont(theme::monoFont(14.0f));
     g.setColour(selected ? theme::text : theme::dim);
-    g.drawText(juce::String(p / 10).paddedLeft('0', 2) + " " + juce::String(p % 10), 10, 0, 60, h, juce::Justification::centredLeft);
+    g.drawText(juce::String(p).paddedLeft('0', 3), 10, 0, 50, h, juce::Justification::centredLeft);
     const auto name = session.library.nameOf(bank, p);
     g.setFont(theme::uiFont(15.0f, selected));
     g.setColour(name.isEmpty() ? theme::dim.withAlpha(0.6f) : theme::text);
-    g.drawText(name.isEmpty() ? juce::String("(not read yet)") : name, 74, 0, w - 110, h, juce::Justification::centredLeft);
+    g.drawText(name.isEmpty() ? juce::String("(not read yet)") : name, 64, 0, w - 100, h, juce::Justification::centredLeft);
     if (session.currentBank == bank && session.currentProgram == p) {
         g.setColour(theme::accent);
         g.fillEllipse(float(w - 22), float(h) * 0.5f - 4.0f, 8.0f, 8.0f);
@@ -261,88 +293,174 @@ void LibraryTab::step(int delta) {
 }
 
 bool LibraryTab::keyPressed(const juce::KeyPress& k) {
-    if (k == juce::KeyPress::returnKey) { openInEditor(selectedProgram()); return true; }
+    if (k == juce::KeyPress::returnKey) {
+        openInEditor(selectedProgram());
+        return true;
+    }
     return false;
 }
 
-void LibraryTab::readBank() {
-    if (!session.midi.isOpen()) { alert("Not connected", "Connect to the QS on the Device tab first."); return; }
-    const int b = bank;
-    (new ReadBankJob(session, b, [this, b](juce::String result) {
+void LibraryTab::readBanks(std::vector<int> banks) {
+    if (!session.midi.isOpen()) {
+        alert("Not connected", "Connect to the QS on the Device tab first.");
+        return;
+    }
+    (new ReadBanksJob(session, std::move(banks), [this](juce::String result) {
         refresh();
-        if (session.setStatus) session.setStatus(juce::String(kBanks[size_t(b)].title) + ": " + result);
-        if (!result.startsWith("Read 128")) alert("Read bank", result);
+        if (session.setStatus) session.setStatus("Read from QS: " + result.upToFirstOccurrenceOf("\n", false, false));
+        if (result.contains("\n")) alert("Read from QS", result);
     }))->launchThread();
 }
 
-void LibraryTab::loadSyxIntoBank() {
-    chooser = std::make_unique<juce::FileChooser>("Load programs from a .syx into " + juce::String(kBanks[size_t(bank)].title),
-                                                  settingsDir(), "*.syx;*.SYX");
+void LibraryTab::importOneSyx() {
+    chooser = std::make_unique<juce::FileChooser>("Import a .syx into " + bankTitle(bank) + " (QS Studio only)",
+                                                  juce::File(settings().getValue("importFolder", settingsDir().getFullPathName())), "*.syx;*.SYX");
     chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this](const juce::FileChooser& fc) {
         auto f = fc.getResult();
         if (!f.existsAsFile()) return;
-        juce::MemoryBlock mb;
-        f.loadFileAsData(mb);
-        auto ptr = static_cast<const uint8_t*>(mb.getData());
-        int n = 0;
-        for (auto& m : qs::splitSysex(qs::Bytes(ptr, ptr + mb.getSize())))
-            if (qs::opcodeOf(m) == qs::UserProgramDump && m.size() > 6)
-                if (auto p = qs::Program::fromDump(m)) {
-                    session.library.programs[size_t(bank)][m[6] & 0x7F] = p;
-                    ++n;
-                }
-        if (n == 0) { alert("No programs", f.getFileName() + " has no QS program dumps."); return; }
-        session.library.source[size_t(bank)] = f.getFileName();
+        const int n = session.library.importFile(f, bank, f.getFileName());
+        if (n == 0) {
+            alert("No programs", f.getFileName() + " has no QS program dumps.");
+            return;
+        }
         session.library.save();
         refresh();
-        if (session.setStatus) session.setStatus("Loaded " + juce::String(n) + " program names from " + f.getFileName());
+        if (session.setStatus) session.setStatus("Imported " + juce::String(n) + " programs from " + f.getFileName() + " into " + bankTitle(bank) + ".");
     });
+}
+
+void LibraryTab::importFolder() {
+    chooser = std::make_unique<juce::FileChooser>("Folder with QS bank .syx files",
+                                                  juce::File(settings().getValue("importFolder", settingsDir().getFullPathName())));
+    chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories, [this](const juce::FileChooser& fc) {
+        auto dir = fc.getResult();
+        if (!dir.isDirectory()) return;
+        auto files = dir.findChildFiles(juce::File::findFiles, false, "*.syx;*.SYX;*.Syx");
+        files.sort();
+        if (files.isEmpty()) {
+            alert("No .syx files", "That folder has no .syx files.");
+            return;
+        }
+        // Ask which bank each file goes to. Factory names (PST1-4) are pre-selected; anything else defaults to Skip.
+        auto* w = new juce::AlertWindow("Import banks", "Choose a bank for each file. Only QS Studio's list changes; nothing is sent to the QS.",
+                                        juce::MessageBoxIconType::QuestionIcon);
+        juce::StringArray choices{"Skip"};
+        for (auto& b : kBanks) choices.add(b.title);
+        const juce::StringPairArray saved = [] {
+            juce::StringPairArray m;
+            for (auto& kv : juce::StringArray::fromTokens(settings().getValue("importMap"), "|", ""))
+                if (kv.contains("=")) m.set(kv.upToFirstOccurrenceOf("=", false, false), kv.fromFirstOccurrenceOf("=", false, false));
+            return m;
+        }();
+        const int shown = juce::jmin(16, files.size());
+        for (int i = 0; i < shown; ++i) {
+            const auto name = files[i].getFileName();
+            w->addComboBox(name, choices, name);
+            int pick = saved.containsKey(name) ? saved[name].getIntValue() + 1 : Library::factoryBankForName(name) + 1;
+            w->getComboBoxComponent(name)->setSelectedItemIndex(juce::jmax(0, pick), juce::dontSendNotification);
+        }
+        if (files.size() > shown) w->addTextBlock("Only the first 16 files are listed.");
+        w->addButton("Import", 1, juce::KeyPress(juce::KeyPress::returnKey));
+        w->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+        w->enterModalState(true, juce::ModalCallbackFunction::create([this, w, dir, files, shown](int r) {
+            if (r != 1) return;
+            juce::StringPairArray map;
+            for (int i = 0; i < shown; ++i) {
+                const auto name = files[i].getFileName();
+                const int idx = w->getComboBoxComponent(name)->getSelectedItemIndex();
+                if (idx > 0) map.set(name, juce::String(idx - 1));
+            }
+            importFolderWithMap(dir, map);
+        }), true);
+    });
+}
+
+void LibraryTab::importFolderWithMap(const juce::File& dir, const juce::StringPairArray& map) {
+    int banks = 0;
+    for (auto& name : map.getAllKeys()) {
+        const int b = map[name].getIntValue();
+        if (session.library.importFile(dir.getChildFile(name), b, name) > 0) ++banks;
+    }
+    juce::StringArray kv;
+    for (auto& name : map.getAllKeys()) kv.add(name + "=" + map[name]);
+    settings().setValue("importFolder", dir.getFullPathName());
+    settings().setValue("importMap", kv.joinIntoString("|"));
+    settings().saveIfNeeded();
+    session.library.save();
+    refresh();
+    if (session.setStatus) session.setStatus("Imported " + juce::String(banks) + " bank(s) from " + dir.getFileName() + ".");
+}
+
+void LibraryTab::applySavedImports(bool onlyEmptyBanks) {
+    const juce::File dir(settings().getValue("importFolder"));
+    if (!dir.isDirectory()) return;
+    for (auto& kv : juce::StringArray::fromTokens(settings().getValue("importMap"), "|", "")) {
+        const auto name = kv.upToFirstOccurrenceOf("=", false, false);
+        const int b = kv.fromFirstOccurrenceOf("=", false, false).getIntValue();
+        if (b < 0 || b >= int(kBanks.size()) || (onlyEmptyBanks && session.library.countRead(b) > 0)) continue;
+        session.library.importFile(dir.getChildFile(name), b, name);
+    }
+    session.library.save();
+    refresh();
 }
 
 void LibraryTab::openInEditor(int prog) {
     if (!session.openInEditor) return;
-    const auto where = juce::String(kBanks[size_t(bank)].title) + " " + juce::String(prog).paddedLeft('0', 3);
+    const auto where = bankTitle(bank) + " " + juce::String(prog).paddedLeft('0', 3);
+    const auto cached = session.library.programs[size_t(bank)][size_t(prog)];
     if (session.midi.isOpen()) {
         session.selectProgram(bank, prog);
-        // Ask for the edit buffer once the QS has switched programs; the editor picks up the reply.
-        juce::Timer::callAfterDelay(250, [this, where] {
-            session.midi.send(qs::editProgramRequest(0));
-            if (session.setStatus) session.setStatus("Loading " + where + " from the QS edit buffer...");
-        });
-        session.openInEditor(session.library.programs[size_t(bank)][size_t(prog)].value_or(qs::Program()), where);
+        // The editor asks the QS for its edit buffer (with retries) and shows the cached copy until the answer arrives.
+        session.openInEditor(cached.value_or(qs::Program()), where);
         return;
     }
-    if (auto& p = session.library.programs[size_t(bank)][size_t(prog)]) session.openInEditor(*p, where + " (offline copy)");
+    if (cached) session.openInEditor(*cached, where + " (offline copy)");
     else alert("Not available", "Connect to the QS, or read this bank first, to open this program.");
 }
 
 void LibraryTab::sendCachedToEditBuffer() {
     const int prog = selectedProgram();
     auto& p = session.library.programs[size_t(bank)][size_t(prog)];
-    if (!p) { alert("Nothing to send", "This program hasn't been read or loaded yet."); return; }
-    if (!session.midi.isOpen()) { alert("Not connected", "Connect to the QS on the Device tab first."); return; }
+    if (!p) {
+        alert("Nothing to send", "This program hasn't been read or imported yet.");
+        return;
+    }
+    if (!session.midi.isOpen()) {
+        alert("Not connected", "Connect to the QS on the Device tab first.");
+        return;
+    }
     session.midi.send(qs::modeSelect(0));
+    session.programModeSent = true;
     session.midi.send(p->editDump());
-    if (session.setStatus) session.setStatus("Sent " + juce::String(p->name()).trimEnd() + " to the QS edit buffer (not stored).");
+    if (session.setStatus) session.setStatus("Auditioning " + juce::String(p->name()).trimEnd() + " on the QS (not stored).");
 }
 
 void LibraryTab::storeToUser() {
     const int prog = selectedProgram();
     auto& p = session.library.programs[size_t(bank)][size_t(prog)];
-    if (!p) { alert("Nothing to store", "This program hasn't been read or loaded yet."); return; }
-    if (!session.midi.isOpen()) { alert("Not connected", "Connect to the QS on the Device tab first."); return; }
+    if (!p) {
+        alert("Nothing to store", "This program hasn't been read or imported yet.");
+        return;
+    }
+    if (!session.midi.isOpen()) {
+        alert("Not connected", "Connect to the QS on the Device tab first.");
+        return;
+    }
     auto* w = new juce::AlertWindow("Store to User bank",
-                                    "Store \"" + juce::String(p->name()).trimEnd() + "\" into which User program?\n"
-                                    "This overwrites that User program on the QS. Back up first with SysEx > Ask QS to Send All.",
+                                    "Save \"" + juce::String(p->name()).trimEnd() + "\" permanently into which User program slot?\n"
+                                    "This replaces the program in that slot on the QS. Back up first with SysEx Librarian > Ask QS to Send All.",
                                     juce::MessageBoxIconType::WarningIcon);
-    w->addTextEditor("num", juce::String(prog), "User program (0-127)");
+    w->addTextEditor("num", juce::String(bank == 0 ? prog : 0), "User slot (0-127)");
     w->addButton("Store", 1, juce::KeyPress(juce::KeyPress::returnKey));
     w->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
     const auto data = *p;
     w->enterModalState(true, juce::ModalCallbackFunction::create([this, w, data](int r) {
         if (r != 1) return;
         const int n = w->getTextEditorContents("num").getIntValue();
-        if (n < 0 || n > 127) { alert("Store", "Pick a number from 0 to 127."); return; }
+        if (n < 0 || n > 127) {
+            alert("Store", "Pick a slot from 0 to 127.");
+            return;
+        }
         session.midi.send(data.userDump(n));
         session.library.programs[0][size_t(n)] = data;
         session.library.save();
@@ -363,29 +481,33 @@ void LibraryTab::resized() {
     auto top = r.removeFromTop(140);
     lcd.setBounds(top.removeFromLeft(juce::jmin(620, top.getWidth())));
     r.removeFromTop(28);
-    auto left = r.removeFromLeft(140);
+    auto left = r.removeFromLeft(150);
     for (auto* b : bankButtons) {
         b->setBounds(left.removeFromTop(38));
         left.removeFromTop(6);
     }
+    cardBankBox.setBounds(left.removeFromTop(30));
     r.removeFromLeft(14);
-    auto right = r.removeFromRight(260);
+    auto right = r.removeFromRight(280);
     r.removeFromRight(14);
-    auto searchRow = r.removeFromTop(32);
+    auto searchRow = r.removeFromTop(34);
     nextBtn.setBounds(searchRow.removeFromRight(40));
     searchRow.removeFromRight(6);
     prevBtn.setBounds(searchRow.removeFromRight(40));
     searchRow.removeFromRight(10);
     search.setBounds(searchRow);
     r.removeFromTop(8);
-    sourceLabel.setBounds(r.removeFromBottom(36));
+    sourceLabel.setBounds(r.removeFromBottom(40));
     r.removeFromBottom(4);
     list.setBounds(r);
-    for (auto* b : {&readBtn, &factoryBtn, &loadBtn, &editBtn, &sendBtn, &storeBtn}) {
-        b->setBounds(right.removeFromTop(36));
-        right.removeFromTop(8);
+    for (auto* b : {&readBtn, &readAllBtn, &importFolderBtn, &importOneBtn}) {
+        b->setBounds(right.removeFromTop(34));
+        right.removeFromTop(6);
     }
     factoryLink.setBounds(right.removeFromTop(22));
-    right.removeFromTop(10);
-    hint.setBounds(right);
+    right.removeFromTop(16);
+    for (auto* b : {&editBtn, &sendBtn, &storeBtn}) {
+        b->setBounds(right.removeFromTop(34));
+        right.removeFromTop(6);
+    }
 }

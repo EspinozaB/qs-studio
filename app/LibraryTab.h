@@ -15,6 +15,7 @@ public:
 
     void showBank(int bank);
     void refresh();
+    void applySavedImports(bool onlyEmptyBanks);  // re-import the remembered .syx folder
 
 private:
     // ListBoxModel
@@ -27,9 +28,10 @@ private:
     void rebuildRows();
     void updateLcd();
     int selectedProgram() const;
-    void readBank();
-    void loadSyxIntoBank();
-    void loadFactoryBanks();
+    void readBanks(std::vector<int> banks);
+    void importOneSyx();
+    void importFolder();
+    void importFolderWithMap(const juce::File& dir, const juce::StringPairArray& map);
     void openInEditor(int prog);
     void sendCachedToEditBuffer();
     void storeToUser();
@@ -42,14 +44,15 @@ private:
     bool suppressSend = false;
 
     theme::Lcd lcd;
-    juce::OwnedArray<juce::TextButton> bankButtons;
+    juce::OwnedArray<juce::TextButton> bankButtons;  // User, Preset 1-3, GenMIDI, Card
+    juce::ComboBox cardBankBox;
     juce::TextEditor search;
     juce::ListBox list{"programs", this};
-    juce::TextButton prevBtn{"<"}, nextBtn{">"}, readBtn{"Read bank from QS"}, loadBtn{"Load .syx into bank"},
-        editBtn{"Open in editor"}, sendBtn{"Send to QS edit buffer"}, storeBtn{"Store to User..."},
-        factoryBtn{"Load factory banks..."};
-    juce::HyperlinkButton factoryLink{"Where to get the factory banks",
+    juce::TextButton prevBtn{"<"}, nextBtn{">"}, readBtn{"Read this bank from QS"}, readAllBtn{"Read all banks from QS"},
+        importFolderBtn{"Import a folder of .syx banks..."}, importOneBtn{"Import a .syx into this bank..."}, editBtn{"Open in editor"},
+        sendBtn{"Audition (send to QS, don't store)"}, storeBtn{"Store to User..."};
+    juce::HyperlinkButton factoryLink{"Get the Alesis factory banks (.syx)",
                                       juce::URL("https://github.com/jzemeocala/Alesis-Archive-Project/tree/HEAD/BANKS/FACTORY")};
-    juce::Label hint, sourceLabel;
+    juce::Label sourceLabel;
     std::unique_ptr<juce::FileChooser> chooser;
 };

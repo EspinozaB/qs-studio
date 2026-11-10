@@ -86,7 +86,9 @@ private:
     qs::Program prog;
     juce::String where = "No program loaded";
     bool awaitingDump = false;
-    juce::uint32 awaitingSince = 0;
+    int requestsSent = 0;
+    juce::uint32 nextRequestAt = 0;
+    void requestEditBuffer(int firstDelayMs);
 
     // Live edit queue: latest value per (sound, param) sent every timer tick; drum/name edits send a full dump.
     std::map<std::pair<int, const qs::ParamDef*>, int> pending;

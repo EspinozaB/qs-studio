@@ -97,7 +97,10 @@ private:
     juce::MidiKeyboardComponent keyboard{session.keys, juce::MidiKeyboardComponent::horizontalKeyboard};
     PerformanceControls perf{session};
     juce::Label chLabel{{}, "MIDI ch"}, velLabel{{}, "Velocity"}, statusLabel;
-    juce::ComboBox channelBox;
+    juce::ComboBox channelBox, controllerBox;
+    juce::Label ctrlLabel{{}, "Controller in"};
+    juce::Array<juce::MidiDeviceInfo> controllerDevices;
+    void fillControllerBox();
     juce::Slider velSlider{juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight};
     juce::TextButton notesOffBtn{"All notes off"};
     juce::TooltipWindow tooltips{this, 600};

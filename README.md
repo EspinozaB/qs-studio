@@ -17,10 +17,12 @@ settings are saved next to the exe (`QSStudio.settings`).
 The bar along the bottom plays the QS on the chosen MIDI channel: keyboard (your computer keys work too), pitch wheel, mod wheel,
 Controller A (A-D on models with four sliders) and volume. Controller numbers are read from the QS Global settings after Identify.
 
-**Factory names without reading every bank:** Library > **Load factory banks...** and pick a folder with the Alesis factory `.syx` files
-(`Q678PST1`-`Q678PST4`, from the [Alesis Archive Project](https://github.com/jzemeocala/Alesis-Archive-Project/tree/HEAD/BANKS/FACTORY)).
-They fill Preset 1-3 and GenMIDI and are re-used automatically. They are factory data: if a bank on your QS differs, read it from the QS.
-No Alesis data ships with QS Studio.
+**Names for every bank:** Library > **Read all banks from QS** reads User, Preset 1-3 and GenMIDI straight from the synth (a few minutes, once).
+Or **Import a folder of .syx banks** and choose which file fills which bank (the Alesis factory `Q678PST1`-`4` files from the
+[Alesis Archive Project](https://github.com/jzemeocala/Alesis-Archive-Project/tree/HEAD/BANKS/FACTORY) are matched automatically).
+Imports only change QS Studio's list; to write a bank to the synth use the SysEx Librarian. No Alesis data ships with QS Studio.
+
+**Play from your own MIDI keyboard:** pick it under **Controller in**; everything you play goes to the QS on the chosen channel.
 
 **QS settings needed:** Global I/O set to MIDI, and Global > MIDI Program Select ON (needed to select and read Preset, GenMIDI and card banks).
 

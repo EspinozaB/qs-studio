@@ -49,6 +49,9 @@ public:
         setColour(juce::ScrollBar::thumbColourId, line);
         setColour(juce::MidiKeyboardComponent::keyDownOverlayColourId, accent.withAlpha(0.75f));
         setColour(juce::MidiKeyboardComponent::mouseOverKeyOverlayColourId, accent.withAlpha(0.3f));
+        setColour(juce::TooltipWindow::backgroundColourId, panelHi);
+        setColour(juce::TooltipWindow::textColourId, text);
+        setColour(juce::TooltipWindow::outlineColourId, accentDim);
         setColour(juce::AlertWindow::backgroundColourId, panel);
         setColour(juce::AlertWindow::textColourId, text);
         setColour(juce::AlertWindow::outlineColourId, line);

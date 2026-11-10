@@ -486,6 +486,35 @@ MainComponent::MainComponent() {
     velSlider.onValueChange = applyVel;
     applyVel();
     notesOffBtn.onClick = [this] { session.allNotesOff(); };
+    controllerBox.setTooltip("A MIDI keyboard or controller connected to this computer. Everything you play on it goes to the QS on the "
+                             "MIDI channel shown. Don't pick the interface port the QS itself is connected to.");
+    controllerBox.onChange = [this] {
+        const int id = controllerBox.getSelectedId();
+        if (id == 999) { fillControllerBox(); return; }
+        const auto ident = id >= 2 ? controllerDevices[id - 2].identifier : juce::String();
+        juce::String err;
+        if (!session.openController(ident, err)) {
+            juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "MIDI controller", err);
+            controllerBox.setSelectedId(1, juce::dontSendNotification);
+            return;
+        }
+        settings().setValue("controllerIn", ident);
+        settings().saveIfNeeded();
+        statusLabel.setText(ident.isEmpty() ? "No MIDI controller." : "Playing the QS from " + controllerBox.getText() + ".", juce::dontSendNotification);
+    };
+    fillControllerBox();
+    {
+        const auto saved = settings().getValue("controllerIn");
+        for (int i = 0; i < controllerDevices.size(); ++i)
+            if (controllerDevices[i].identifier == saved) {
+                juce::String err;
+                if (session.openController(saved, err)) controllerBox.setSelectedId(i + 2, juce::dontSendNotification);
+            }
+    }
+    addAndMakeVisible(controllerBox);
+    addAndMakeVisible(ctrlLabel);
+    ctrlLabel.setColour(juce::Label::textColourId, theme::dim);
+    ctrlLabel.setFont(theme::uiFont(13.0f, true));
     statusLabel.setColour(juce::Label::textColourId, theme::dim);
     statusLabel.setFont(theme::uiFont(13.0f));
     for (juce::Component* c : std::initializer_list<juce::Component*>{&chLabel, &velLabel, &channelBox, &velSlider, &notesOffBtn, &statusLabel, &perf})
@@ -495,6 +524,21 @@ MainComponent::MainComponent() {
         l->setFont(theme::uiFont(13.0f, true));
     }
     setSize(1360, 920);
+}
+
+void MainComponent::fillControllerBox() {
+    const auto current = controllerBox.getSelectedId() >= 2 && controllerBox.getSelectedId() - 2 < controllerDevices.size()
+                             ? controllerDevices[controllerBox.getSelectedId() - 2].identifier
+                             : juce::String();
+    controllerDevices = juce::MidiInput::getAvailableDevices();
+    controllerBox.clear(juce::dontSendNotification);
+    controllerBox.addItem("None", 1);
+    for (int i = 0; i < controllerDevices.size(); ++i) controllerBox.addItem(controllerDevices[i].name, i + 2);
+    controllerBox.addSeparator();
+    controllerBox.addItem("Rescan devices", 999);
+    controllerBox.setSelectedId(1, juce::dontSendNotification);
+    for (int i = 0; i < controllerDevices.size(); ++i)
+        if (controllerDevices[i].identifier == current) controllerBox.setSelectedId(i + 2, juce::dontSendNotification);
 }
 
 MainComponent::~MainComponent() {
@@ -508,9 +552,8 @@ void MainComponent::sysexReceived(const qs::Bytes& msg) {
         session.deviceName = juce::String(d->model) + " v" + juce::String(d->version);
         statusLabel.setText("Connected to " + session.deviceName, juce::dontSendNotification);
         // Factory names for empty Preset/GenMIDI banks, if the user pointed us at the factory files before.
-        const juce::File factory(settings().getValue("factoryFolder"));
-        if (factory.isDirectory()) session.library.loadFactoryFolder(factory, true);
-        library->refresh();
+        session.programModeSent = false;
+        library->applySavedImports(true);  // fill empty banks from the .syx folder the user imported before
         perf.updateLayout();
         resized();
         session.midi.send(qs::globalRequest());  // controller numbers and Program Select
@@ -544,6 +587,9 @@ void MainComponent::resized() {
     velSlider.setBounds(bar.removeFromLeft(220));
     bar.removeFromLeft(16);
     notesOffBtn.setBounds(bar.removeFromLeft(120).reduced(0, 1));
+    bar.removeFromLeft(16);
+    ctrlLabel.setBounds(bar.removeFromLeft(92));
+    controllerBox.setBounds(bar.removeFromLeft(220).reduced(0, 2));
     bar.removeFromLeft(16);
     statusLabel.setBounds(bar);
     bottom.removeFromTop(6);

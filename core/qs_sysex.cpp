@@ -141,7 +141,7 @@ std::optional<SectorBlock> parseSectorWrite(const Bytes& m) {
 
 std::string nackText(int code) {
     switch (code) {
-        case 0: return "No card present, or not a FLASH card";
+        case 0: return "No card present, or not a FLASH card (RAM program cards such as the RAM512 also answer this: they can't be read this way)";
         case 1: return "Card is write protected";
         case 2: return "Erase failed (FLASH chip timeout)";
         case 3: return "Checksum didn't match";
