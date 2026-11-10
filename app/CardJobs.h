@@ -42,6 +42,98 @@ inline BlockResult readBlock(MidiLink& midi, int sector, int block, juce::Thread
     return r;
 }
 
+// Dumps the QS's built-in sample ROM over MIDI. On units that answer card reads with internal memory
+// (opcode 13), each 1 KB block request returns the next 1 KB of the sample ROM.
+// Writes as it goes so a cancelled or interrupted dump can be resumed; stops early if the ROM starts repeating.
+class DumpRomJob : public juce::ThreadWithProgressWindow {
+public:
+    DumpRomJob(MidiLink& m, int numSectors, juce::File dest, std::function<void(juce::String)> done)
+        : ThreadWithProgressWindow("Dumping the internal sample ROM over MIDI", true, true), midi(m), sectors(numSectors), file(dest),
+          onDone(std::move(done)) {}
+
+    void run() override {
+        midi.clearQueue();
+        const int total = sectors * 128;
+        int start = int(file.getSize() / 1024);
+        if (start >= total) start = total;
+        juce::FileOutputStream out(file);
+        if (out.failedToOpen()) { result = "Couldn't write " + file.getFullPathName(); return; }
+        out.setPosition(juce::int64(start) * 1024);
+        out.truncate();
+
+        qs::Bytes block0;
+        if (start > 0) {
+            juce::MemoryBlock mb;
+            juce::FileInputStream in(file);
+            if (in.openedOk()) in.readIntoMemoryBlock(mb, 1024);
+            auto p = static_cast<const uint8_t*>(mb.getData());
+            block0.assign(p, p + mb.getSize());
+        }
+        int badSums = 0, done = start;
+        const auto t0 = juce::Time::getMillisecondCounter();
+        juce::String stopNote;
+        for (int i = start; i < total && !threadShouldExit(); ++i) {
+            const int s = i / 128, b = i % 128;
+            BlockResult r;
+            for (int attempt = 0; attempt < 3; ++attempt) {
+                r = readBlock(midi, s, b, this);
+                if (r.kind == BlockResult::Ok || r.kind == BlockResult::Nack || r.kind == BlockResult::Cancelled) break;
+            }
+            if (r.kind == BlockResult::Cancelled) break;
+            if (r.kind == BlockResult::Nack) {
+                if (i == 0) { result = "The QS reported: " + juce::String(qs::nackText(r.nackCode)) + "\nThis unit doesn't hand out its ROM this way."; return; }
+                stopNote = "The QS stopped answering at " + juce::String(i / 1024) + " MB (it refused sector " + juce::String(s) + "), so that's where its ROM ends.";
+                break;
+            }
+            if (r.kind == BlockResult::Timeout) {
+                result = "No reply from the QS at " + juce::String(i) + " KB. Check the MIDI cables, then click Dump again to resume from here.";
+                out.flush();
+                return;
+            }
+            if (i == 0) {
+                block0 = r.data;
+                if (!qs::looksLikeInternalRom(block0))
+                    stopNote = "Warning: the first block doesn't look like the internal sample ROM (this unit may be reading a card instead).";
+            } else if (b == 0 && (s == 32 || s == 64) && r.data == block0) {
+                stopNote = "The ROM repeats from " + juce::String(s / 8) + " MB on, so it's " + juce::String(s / 8) + " MB. Stopped there.";
+                break;
+            }
+            if (r.kind == BlockResult::BadChecksum) ++badSums;
+            out.write(r.data.data(), r.data.size());
+            if (i % 64 == 63) out.flush();
+            ++done;
+            setProgress(double(done) / total);
+            const double el = (juce::Time::getMillisecondCounter() - t0) / 1000.0, perBlock = el / juce::jmax(1, done - start);
+            const int minsLeft = int(perBlock * (total - done) / 60.0) + 1;
+            setStatusMessage(juce::String(done / 1024.0, 2) + " of " + juce::String(total / 1024) + " MB   (about " +
+                             (minsLeft >= 60 ? juce::String(minsLeft / 60) + " h " + juce::String(minsLeft % 60) + " min" : juce::String(minsLeft) + " min") +
+                             " left)");
+        }
+        out.flush();
+        const auto size = file.getSize();
+        const bool finished = !threadShouldExit() && (done >= total || stopNote.startsWith("The QS stopped") || stopNote.startsWith("The ROM repeats"));
+        result = (finished ? "Done. " : "Paused. Click Dump again with the same file to resume. ") + juce::String(size / 1024) + " KB saved to " +
+                 file.getFullPathName() + (stopNote.isNotEmpty() ? "\n\n" + stopNote : juce::String()) +
+                 (badSums ? "\n\nWarning: " + juce::String(badSums) + " blocks still had checksum mismatches after 3 tries." : juce::String());
+        if (finished) {
+            juce::FileInputStream in(file);
+            result += "\n\nSHA-256: " + juce::SHA256(in).toHexString();
+        }
+    }
+
+    void threadComplete(bool) override {
+        if (onDone) onDone(result);
+        delete this;
+    }
+
+private:
+    MidiLink& midi;
+    int sectors;
+    juce::File file;
+    std::function<void(juce::String)> onDone;
+    juce::String result;
+};
+
 // Reads `sectors` x 128 KB from the card into an image file.
 class ReadCardJob : public juce::ThreadWithProgressWindow {
 public:

@@ -12,7 +12,7 @@ settings are saved next to the exe (`QSStudio.settings`).
 | Record | Records the QS through your audio interface to WAV (16/24-bit), with live monitoring so you can hear the inputs without a DAW. **Auto-sample notes** plays a note range at chosen velocities and saves one file per note. |
 | Device | Pick MIDI in/out, connect, identify the synth (model + OS version). |
 | SysEx Librarian | Record dumps, **Ask QS to Send All**, save/open `.syx`, check a backup is complete (357 parts), send `.syx` back. |
-| Card Tools | Open QCard / QuadraCard / Sound Bridge images, export WAVs or SFZ, test the card slot, read a card over MIDI, write an image to a FLASH card. |
+| Card Tools | Open QCard / QuadraCard / Sound Bridge images, export WAVs or SFZ, test the card slot, read a card over MIDI, write an image to a FLASH card. **Dump internal sample ROM** saves the built-in samples to a .bin on units that answer card reads with their ROM (confirmed on a QSR: header `QS78ROM v2`); resumable, about 1 hour per 8 MB. Keep ROM dumps private. |
 
 The bar along the bottom plays the QS on the chosen MIDI channel: keyboard (your computer keys work too), pitch wheel, mod wheel,
 Controller A (A-D on models with four sliders) and volume. Controller numbers are read from the QS Global settings after Identify.

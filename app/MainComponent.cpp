@@ -261,7 +261,7 @@ void SysexTab::resized() {
 
 // ---------- Card tools ----------
 CardTab::CardTab(MidiLink& m) : midi(m) {
-    for (juce::Component* c : std::initializer_list<juce::Component*>{&openBtn, &wavBtn, &sfzBtn, &testBtn, &readBtn, &writeBtn, &sizeBox, &sizeLabel, &info})
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&openBtn, &wavBtn, &sfzBtn, &testBtn, &readBtn, &writeBtn, &romBtn, &sizeBox, &sizeLabel, &info})
         addAndMakeVisible(c);
     setupLog(info);
     sizeBox.addItem("512 KB (RAM512)", 4);
@@ -277,6 +277,14 @@ CardTab::CardTab(MidiLink& m) : midi(m) {
     testBtn.onClick = [this] { testReader(); };
     readBtn.onClick = [this] { readCard(); };
     writeBtn.onClick = [this] { writeCard(); };
+    romBtn.onClick = [this] { dumpRom(); };
+    openBtn.setTooltip("Opens a card image file (.img/.bin) on your computer to look at its samples, programs and mixes.");
+    testBtn.setTooltip("Asks the QS for the first 1 KB of its card slot. Some units answer with their built-in sample ROM instead.");
+    readBtn.setTooltip("Reads a FLASH card in the slot into an .img file. RAM program cards (RAM512) can't be read this way.");
+    writeBtn.setTooltip("Writes the image you opened with Open card image onto a FLASH card in the slot. It doesn't create an image: "
+                        "use Read card or Dump internal sample ROM for that.");
+    romBtn.setTooltip("Saves the QS's built-in sample ROM to a .bin file over MIDI, on units where Test card reader says "
+                      "\"built-in sound ROM\". Takes about 1 hour per 8 MB and can be paused and resumed.");
     appendLine(info, "Open a QCard / QuadraCard / Sound Bridge .img to see its voices, programs and mixes and export samples.");
     appendLine(info, "Test card reader asks the QS for the first 1 KB of the card in its slot. Power the QS off before inserting a card.");
 }
@@ -394,6 +402,39 @@ void CardTab::readCard() {
                          });
 }
 
+void CardTab::dumpRom() {
+    if (!requireMidi()) return;
+    auto* w = new juce::AlertWindow("Dump internal sample ROM",
+                                    "Saves the built-in sample ROM to a .bin file over MIDI. Leave the QS alone while it runs.\n"
+                                    "About 1 hour for 8 MB, 2 hours for 16 MB. You can cancel and click Dump again later to resume.\n\n"
+                                    "Keep the file for yourself: the samples are Alesis's copyright.",
+                                    juce::MessageBoxIconType::QuestionIcon);
+    w->addComboBox("size", {"16 MB (QS7, QS8, QSR and .1/.2 models)", "8 MB (original QS6)"}, "ROM size");
+    w->addButton("Choose file and start", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    w->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    w->enterModalState(true, juce::ModalCallbackFunction::create([this, w](int r) {
+        if (r != 1) return;
+        const int sectors = w->getComboBoxComponent("size")->getSelectedItemIndex() == 0 ? 128 : 64;
+        auto dir = settingsDir().getChildFile("ROM dumps");
+        dir.createDirectory();
+        chooser = std::make_unique<juce::FileChooser>("Save the ROM dump as (pick an existing partial dump to resume it)",
+                                                      dir.getChildFile(sectors == 128 ? "QS78R_internal_sample_ROM.bin" : "QS6_internal_sample_ROM.bin"),
+                                                      "*.bin");
+        chooser->launchAsync(juce::FileBrowserComponent::saveMode, [this, sectors](const juce::FileChooser& fc) {
+            auto f = fc.getResult();
+            if (f == juce::File()) return;
+            f = f.withFileExtension("bin");
+            if (f.existsAsFile() && f.getSize() > 0)
+                appendLine(info, "\nResuming " + f.getFileName() + " from " + juce::String(f.getSize() / 1024) + " KB.");
+            auto* job = new cardjobs::DumpRomJob(midi, sectors, f, [this](juce::String res) {
+                appendLine(info, "\n" + res);
+                ::info("ROM dump", res);
+            });
+            job->launchThread();
+        });
+    }), true);
+}
+
 void CardTab::writeCard() {
     if (!requireMidi()) return;
     if (card.data.empty()) { ::info("No image", "Open the card image to write first."); return; }
@@ -433,8 +474,8 @@ void CardTab::resized() {
     sizeLabel.setBounds(row.removeFromLeft(70));
     sizeBox.setBounds(row.removeFromLeft(150));
     row.removeFromLeft(12);
-    for (auto* b : {&testBtn, &readBtn, &writeBtn}) {
-        b->setBounds(row.removeFromLeft(b == &writeBtn ? 190 : 140));
+    for (auto* b : {&testBtn, &readBtn, &writeBtn, &romBtn}) {
+        b->setBounds(row.removeFromLeft(b == &writeBtn ? 190 : (b == &romBtn ? 240 : 140)));
         row.removeFromLeft(8);
     }
     r.removeFromTop(8);

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(QSStudio VERSION 0.4.0 LANGUAGES C CXX)
+project(QSStudio VERSION 0.5.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -32,6 +32,6 @@ if(QS_BUILD_APP)
         JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:QSStudio,JUCE_PRODUCT_NAME>"
         JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:QSStudio,JUCE_VERSION>")
     target_link_libraries(QSStudio PRIVATE qscore
-        juce::juce_gui_extra juce::juce_audio_utils juce::juce_audio_devices juce::juce_audio_formats juce::juce_audio_basics
+        juce::juce_gui_extra juce::juce_audio_utils juce::juce_audio_devices juce::juce_audio_formats juce::juce_audio_basics juce::juce_cryptography
         juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
 endif()

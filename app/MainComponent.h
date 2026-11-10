@@ -65,6 +65,7 @@ private:
     void exportWavs(bool sfz);
     void testReader();
     void readCard();
+    void dumpRom();
     void writeCard();
     bool requireMidi();
 
@@ -72,7 +73,7 @@ private:
     qs::CardImage card;
     juce::File cardFile;
     juce::TextButton openBtn{"Open card image"}, wavBtn{"Export WAVs"}, sfzBtn{"Export SFZ instruments"},
-        testBtn{"Test card reader"}, readBtn{"Read card from QS"}, writeBtn{"Write image to FLASH card"};
+        testBtn{"Test card reader"}, readBtn{"Read card from QS"}, writeBtn{"Write image to FLASH card"}, romBtn{"Dump internal sample ROM..."};
     juce::ComboBox sizeBox;
     juce::Label sizeLabel{{}, "Card size"};
     juce::TextEditor info;
