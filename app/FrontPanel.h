@@ -21,7 +21,8 @@ public:
         std::function<void(int)> stepChannel;    // -1 / +1
         std::function<void(bool mix)> setMode;   // MIX or PROGRAM pressed
         std::function<void()> edit, store, showCards;
-        std::function<int()> currentProgram;
+        std::function<int()> currentProgram;     // current program, or mix in Mix mode
+        std::function<int()> highestNumber;      // 127 for programs, 99 for mixes
         std::function<void()> refreshDisplay;    // the QSR cursor moved
     };
     enum class Target { Program, Bank, Channel };  // what the QSR VALUE knob changes
@@ -32,7 +33,7 @@ public:
                                        "WOODWIND", "SYNTH 1", "SYNTH 2", "SYNTH 3", "RHYTHM/FX", "DRUMS/PERC"};
         for (int i = 0; i < 13; ++i) {
             auto* k = groupKeys.add(new hw::Key(juce::String(i * 10).paddedLeft('0', 2), groups[i]));
-            k->onClick = [this, i] { select(juce::jmin(127, i * 10 + current() % 10)); };
+            k->onClick = [this, i] { select(juce::jmin(highest(), i * 10 + current() % 10)); };
             k->setTooltip("Programs " + juce::String(i * 10).paddedLeft('0', 2) + "-" + juce::String(juce::jmin(127, i * 10 + 9)).paddedLeft('0', 2) +
                           ". In the QS's edit modes this key selects " + juce::String(kProgFn[i]) + " (Program), " + kFxFn[i] + " (Effects) or " +
                           kMixFn[i] + " (Mix).");
@@ -42,24 +43,16 @@ public:
             auto* k = digitKeys.add(new hw::Key(juce::String(d)));
             k->onClick = [this, d] {
                 const int p = (current() / 10) * 10 + d;
-                if (p <= 127) select(p);
+                if (p <= highest()) select(p);
             };
             k->setTooltip("Program number ones digit. In the QS's edit modes: " + juce::String(kSoundFn[d]) + ", Drum " + juce::String(d + 1) +
                           " or Mix Channel " + juce::String(d + 1) + ".");
             addChildComponent(k);
         }
-        mixKey.onClick = [this] {
-            mixMode = true;
-            if (act.setMode) act.setMode(true);
-            sync();
-        };
-        mixKey.setTooltip("Switches the QS to Mix mode. QS Studio doesn't list mixes yet; press PROGRAM (or pick a program) to go back.");
-        progKey.onClick = [this] {
-            mixMode = false;
-            if (act.setMode) act.setMode(false);
-            sync();
-        };
-        progKey.setTooltip("Program mode: plays the program shown");
+        mixKey.onClick = [this] { if (act.setMode) act.setMode(true); };
+        mixKey.setTooltip("Mix mode: lists the mixes of this bank and switches the QS to Mix mode");
+        progKey.onClick = [this] { if (act.setMode) act.setMode(false); };
+        progKey.setTooltip("Program mode: lists the programs of this bank and switches the QS to Program mode");
         editKey.onClick = [this] { if (act.edit) act.edit(); };
         editKey.setTooltip("EDIT: opens this program in the Program Editor");
         storeKey.onClick = [this] { if (act.store) act.store(); };
@@ -68,7 +61,7 @@ public:
         bankUp.onClick = [this] { if (act.stepBank) act.stepBank(1); };
         bankDown.setTooltip("Previous bank");
         bankUp.setTooltip("Next bank");
-        valueUp.onClick = [this] { select(juce::jmin(127, current() + 1)); };
+        valueUp.onClick = [this] { select(current() + 1); };
         valueDown.onClick = [this] { select(juce::jmax(0, current() - 1)); };
         valueUp.setTooltip("VALUE up: next program");
         valueDown.setTooltip("VALUE down: previous program");
@@ -87,7 +80,7 @@ public:
         valueKnob.setTooltip("VALUE knob: drag up/down or use the mouse wheel. Changes the program, or the bank / MIDI channel after CURSOR or MIDI CH.");
         valueKnob.onStep = [this](int s) {
             switch (target) {
-                case Target::Program: select(juce::jlimit(0, 127, current() + s)); break;
+                case Target::Program: select(current() + s); break;
                 case Target::Bank: if (act.stepBank) act.stepBank(s); break;
                 case Target::Channel: if (act.stepChannel) act.stepChannel(s); break;
             }
@@ -130,18 +123,21 @@ public:
     void sync() {
         if (theme::currentStyle != style) setStyle(theme::currentStyle);
         const int p = current();
-        for (int i = 0; i < groupKeys.size(); ++i) groupKeys[i]->setLit(!mixMode && i == p / 10);
+        for (int i = 0; i < groupKeys.size(); ++i) {
+            groupKeys[i]->setLit(i == p / 10);
+            groupKeys[i]->setEnabled(i * 10 <= highest());
+        }
         for (int d = 0; d < digitKeys.size(); ++d) {
-            digitKeys[d]->setLit(!mixMode && d == p % 10);
-            digitKeys[d]->setEnabled((p / 10) * 10 + d <= 127);
+            digitKeys[d]->setLit(d == p % 10);
+            digitKeys[d]->setEnabled((p / 10) * 10 + d <= highest());
         }
         mixKey.setLit(mixMode);
         progKey.setLit(!mixMode);
         cursorKey.setLit(target == Target::Bank);
         midiChKey.setLit(target == Target::Channel);
     }
-    void leaveMixMode() {
-        mixMode = false;
+    void setMixMode(bool m) {
+        mixMode = m;
         sync();
     }
     bool inMixMode() const { return mixMode; }
@@ -223,10 +219,8 @@ private:
         g.fillRoundedRectangle(panel, 10.0f);
         g.setColour(juce::Colours::white.withAlpha(0.06f));
         g.drawRoundedRectangle(panel.reduced(0.5f), 10.0f, 1.0f);
-        // ALESIS wordmark (top-left, as on the keyboard).
-        g.setColour(juce::Colour(0xffd9dadc));
-        g.setFont(theme::uiFont(19.0f, true).withHorizontalScale(1.15f));
-        g.drawText("ALESIS", juce::Rectangle<float>(kEditX, 8, 150, 24), juce::Justification::centredLeft);
+        // Model name in plain text. No maker's logo or stylised model logo: QS Studio isn't an Alesis product.
+        label(g, "QS6", {kEditX, 8, 150, 22}, 15.0f, juce::Justification::centredLeft, 0.85f);
 
         bracket(g, {kEditX, 34, kKeyW * 3 + 12, 14}, "EDIT MODE");
         label(g, juce::String(juce::CharPointer_UTF8("\xe2\x97\x80 PROGRAM CHANNEL SELECT \xe2\x96\xb6")), {kEditX + 62, kRow2 + kKeyH + 6, kKeyW * 2 + 10, 12}, 8.5f);
@@ -255,20 +249,6 @@ private:
             label(g, juce::String(juce::CharPointer_UTF8("\xe2\x96\xb6 ")) + belowNames[row], {kGridX + 10 * kCellW + 2, y, 92, 11}, 7.6f,
                   juce::Justification::centredLeft);
         }
-        // QS6 logo, outlined, bottom right.
-        juce::Path logo;
-        juce::GlyphArrangement ga;
-        ga.addLineOfText(theme::uiFont(46.0f, true).withHorizontalScale(1.35f), "QS6", 0, 0);
-        ga.createPath(logo);
-        const auto lb = logo.getBounds();
-        // Sits to the right of 0-9, level with them, like on the keyboard.
-        const float logoW = kW - 14 - (kGridX + 10 * kCellW + 96);
-        logo.applyTransform(juce::AffineTransform::scale(juce::jmin(1.0f, logoW / lb.getWidth())));
-        const auto lb2 = logo.getBounds();
-        logo.applyTransform(juce::AffineTransform::translation(kW - 14 - lb2.getRight(), kDigitY + kDigitH + 4 - lb2.getBottom()));
-        g.setColour(juce::Colour(0xff9aa3ad));
-        g.strokePath(logo, juce::PathStrokeType(1.4f));
-        label(g, "64 VOICE EXPANDABLE SYNTHESIZER", {kW - 14 - logoW, kDigitY + kDigitH + 8, logoW, 10}, 6.0f, juce::Justification::centredRight, 0.7f);
     }
 
     // ---------------- QSR ----------------
@@ -309,19 +289,9 @@ private:
         g.drawHorizontalLine(1, face.getX(), face.getRight());
         g.setColour(juce::Colours::black);
         g.drawHorizontalLine(int(h) - 1, face.getX(), face.getRight());
-        // Logo block.
-        g.setColour(juce::Colour(0xffd9dadc));
-        g.setFont(theme::uiFont(15.0f, true).withHorizontalScale(1.15f));
-        g.drawText("ALESIS", juce::Rectangle<float>(50, 18, 110, 20), juce::Justification::centredLeft);
-        juce::Path logo;
-        juce::GlyphArrangement ga;
-        ga.addLineOfText(theme::uiFont(38.0f, true).withHorizontalScale(1.3f), "QSR", 0, 0);
-        ga.createPath(logo);
-        const auto lb = logo.getBounds();
-        logo.applyTransform(juce::AffineTransform::translation(50 - lb.getX(), 82 - lb.getBottom()));
-        g.setColour(juce::Colour(0xff9aa3ad));
-        g.strokePath(logo, juce::PathStrokeType(1.3f));
-        label(g, "64 VOICE EXPANDABLE SYNTH MODULE", {50, 90, 120, 10}, 6.0f, juce::Justification::centredLeft, 0.7f);
+        // Model name in plain text (no maker's logo or stylised model logo).
+        label(g, "QSR", {50, 30, 100, 26}, 20.0f, juce::Justification::centredLeft, 0.85f);
+        label(g, "rack panel", {50, 58, 100, 12}, 8.0f, juce::Justification::centredLeft, 0.5f);
         // Phones jack.
         juce::Rectangle<float> jack(172, 57, 22, 22);
         g.setColour(juce::Colour(0xff3a3c40));
@@ -350,9 +320,9 @@ private:
 
     void valueChanged(juce::Value& v) override { volumeKnob.setValue(int(v.getValue()), false); }
     int current() const { return act.currentProgram ? act.currentProgram() : 0; }
+    int highest() const { return act.highestNumber ? act.highestNumber() : 127; }
     void select(int p) {
-        mixMode = false;
-        if (act.selectProgram) act.selectProgram(juce::jlimit(0, 127, p));
+        if (act.selectProgram) act.selectProgram(juce::jlimit(0, highest(), p));
     }
     void setTarget(Target t) {
         target = t;

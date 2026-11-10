@@ -114,6 +114,147 @@ private:
     std::function<void(juce::String)> onDone;
 };
 
+// Reads the mixes of one or more banks.
+// User: opcode 0F per mix. Other banks: the QS only changes mixes on program changes when Global > MIDI Program Select is
+// set to a channel, so this sets it to QS Studio's channel for the read, selects each mix (Mix mode, bank select, program
+// change) and asks for the mix edit buffer (0F 100). Program Select and Program mode are put back afterwards.
+class ReadMixesJob : public juce::ThreadWithProgressWindow {
+public:
+    ReadMixesJob(Session& s, std::vector<int> b, std::function<void(juce::String)> done)
+        : ThreadWithProgressWindow("Reading mixes from the QS", true, true), session(s), banks(std::move(b)), onDone(std::move(done)) {}
+
+    void run() override {
+        auto& midi = session.midi;
+        const int total = int(banks.size()) * 100;
+        int doneCount = 0;
+        const bool needSelect = std::any_of(banks.begin(), banks.end(), [](int b) { return b != 0; });
+        if (needSelect) {
+            if (!session.globalKnown) {  // we need the current Program Select to put it back
+                midi.clearQueue();
+                midi.send(qs::globalRequest());
+                if (auto r = midi.waitFor([](const qs::Bytes& m) { return qs::opcodeOf(m) == qs::GlobalDump; }, 2000, this))
+                    if (auto g = qs::parseGlobalDump(*r)) {
+                        session.global = *g;
+                        session.globalKnown = true;
+                    }
+                if (!session.globalKnown) {
+                    problems.add("The QS didn't send its Global settings, so mixes in Preset and card banks weren't read.");
+                    banks.erase(std::remove_if(banks.begin(), banks.end(), [](int b) { return b != 0; }), banks.end());
+                }
+            }
+            if (session.globalKnown) {
+                originalSelect = session.global.programSelect;
+                if (originalSelect != session.channel + 1) {
+                    session.setProgramSelect(session.channel + 1);
+                    changedSelect = true;
+                    wait(100);
+                }
+                midi.send(qs::modeSelect(1));
+                session.programModeSent = false;
+                session.mixModeSent = true;
+                wait(150);
+            }
+        }
+        for (int bank : banks) {
+            if (threadShouldExit()) break;
+            auto& out = results[bank];
+            int got = 0, same = 0;
+            qs::Bytes prev;
+            for (int n = 0; n < 100 && !threadShouldExit(); ++n) {
+                setStatusMessage(bankTitle(bank) + ": mix " + juce::String(n + 1) + " of 100");
+                std::optional<qs::Bytes> msg;
+                auto isMix = [](int want) {
+                    return [want](const qs::Bytes& m) {
+                        const int op = qs::opcodeOf(m);
+                        return (op == qs::NewMixDump || op == qs::OldMixDump) && m.size() > 6 && m[6] == want;
+                    };
+                };
+                if (bank == 0) {
+                    for (int attempt = 0; attempt < 3 && !msg && !threadShouldExit(); ++attempt) {
+                        midi.send(qs::mixRequest(n));
+                        msg = midi.waitFor(isMix(n), 1500, this);
+                    }
+                } else {
+                    midi.sendMidi(juce::MidiMessage::controllerEvent(session.channel, 0, kBanks[size_t(bank)].cc0));
+                    midi.sendMidi(juce::MidiMessage::programChange(session.channel, n));
+                    wait(80);
+                    for (int attempt = 0; attempt < 4 && !threadShouldExit(); ++attempt) {
+                        midi.clearQueue();
+                        midi.send(qs::mixRequest(100));
+                        msg = midi.waitFor(isMix(100), 1500, this);
+                        if (!msg) continue;
+                        if (n > 0 && !prev.empty() && payload(*msg) == prev && attempt < 3) {  // not switched yet
+                            wait(150);
+                            continue;
+                        }
+                        break;
+                    }
+                    if (msg && n > 0 && payload(*msg) == prev) ++same;
+                }
+                if (!msg) {
+                    if (threadShouldExit()) break;
+                    problems.add(got == 0 ? bankTitle(bank) + " mixes: the QS did not answer."
+                                          : bankTitle(bank) + " mixes: the QS stopped answering at mix " + juce::String(n) + ".");
+                    break;
+                }
+                if (n == 3 && same >= 3) {
+                    problems.add(bankTitle(bank) + " mixes: every mix came back the same, so the QS isn't switching mixes. "
+                                 "Check that the MIDI channel in QS Studio matches the QS.");
+                    out = {};
+                    got = 0;
+                    break;
+                }
+                out[size_t(n)] = *msg;
+                prev = payload(*msg);
+                ++got;
+                setProgress(double(++doneCount) / total);
+            }
+            counts[bank] = got;
+        }
+        // Put the QS back the way it was.
+        if (changedSelect) {
+            session.setProgramSelect(originalSelect);
+            wait(100);
+        }
+        if (needSelect) {
+            midi.send(qs::modeSelect(0));
+            session.programModeSent = true;
+            session.mixModeSent = false;
+        }
+    }
+
+    void threadComplete(bool) override {
+        juce::StringArray summary;
+        for (int bank : banks) {
+            const int got = counts[bank];
+            if (got > 0) {
+                for (int n = 0; n < 100; ++n)
+                    if (!results[bank][size_t(n)].empty()) session.library.setMix(bank, n, results[bank][size_t(n)]);
+                session.library.mixSource[size_t(bank)] = "your " + (session.deviceName.isNotEmpty() ? session.deviceName : juce::String("QS")) +
+                                                          " (read " + juce::Time::getCurrentTime().formatted("%Y-%m-%d") + ")";
+            }
+            summary.add(bankTitle(bank) + ": " + juce::String(got) + " of 100 mixes");
+        }
+        if (changedSelect)
+            problems.add("MIDI Program Select was set to channel " + juce::String(session.channel) + " during the read and has been put back.");
+        session.library.save();
+        if (onDone) onDone(summary.joinIntoString(", ") + (problems.isEmpty() ? "" : "\n\n" + problems.joinIntoString("\n")));
+        delete this;
+    }
+
+private:
+    static qs::Bytes payload(const qs::Bytes& m) { return m.size() > 7 ? qs::Bytes(m.begin() + 7, m.end()) : m; }
+
+    Session& session;
+    std::vector<int> banks;
+    std::map<int, std::array<qs::Bytes, 100>> results;
+    std::map<int, int> counts;
+    juce::StringArray problems;
+    int originalSelect = 1;
+    bool changedSelect = false;
+    std::function<void(juce::String)> onDone;
+};
+
 // Sends a list of SysEx messages, paced so the QS keeps up.
 void sendPaced(Session& s, const std::vector<qs::Bytes>& msgs, juce::ThreadWithProgressWindow* t) {
     for (size_t i = 0; i < msgs.size() && !t->threadShouldExit(); ++i) {
@@ -213,20 +354,13 @@ LibraryTab::LibraryTab(Session& s) : session(s) {
     act.edit = [this] { openInEditor(selectedProgram()); };
     act.store = [this] { storeToUser(); };
     act.currentProgram = [this] { return selectedProgram(); };
+    act.highestNumber = [this] { return mixView ? 99 : 127; };
     act.stepChannel = [this](int d) {
         session.setChannel(juce::jlimit(1, 16, session.channel + d));
         if (session.channelChanged) session.channelChanged();
         updateLcd();
     };
-    act.setMode = [this](bool mix) {
-        session.programModeSent = false;  // the next program select puts the QS back in Program mode
-        if (mix) {
-            if (session.midi.isOpen()) session.midi.send(qs::modeSelect(1));
-        } else if (session.midi.isOpen()) {
-            session.selectProgram(bank, selectedProgram());
-        }
-        updateLcd();
-    };
+    act.setMode = [this](bool mix) { setMixView(mix, true); };
     act.showCards = [this] { showBank(kFirstCardBank + cardBankBox.getSelectedItemIndex()); };
     act.refreshDisplay = [this] { updateLcd(); };
     panel = std::make_unique<FrontPanel>(lcd, session.volume, act);
@@ -269,8 +403,24 @@ LibraryTab::LibraryTab(Session& s) : session(s) {
                              "loads the bank you pick, tells you which buttons to press on the QS, checks the card, then restores your User bank.");
     prevBtn.onClick = [this] { step(-1); };
     nextBtn.onClick = [this] { step(1); };
-    readBtn.onClick = [this] { readBanks({bank}); };
-    readAllBtn.onClick = [this] { readBanks({0, 1, 2, 3, 4}); };
+    readBtn.onClick = [this] {
+        if (mixView) readMixes({bank});
+        else readBanks({bank});
+    };
+    readAllBtn.onClick = [this] {
+        if (mixView) readMixes({0, 1, 2, 3, 4});
+        else readBanks({0, 1, 2, 3, 4});
+    };
+    for (auto* b : {&progViewBtn, &mixViewBtn}) {
+        b->setClickingTogglesState(false);
+        b->setConnectedEdges(b == &progViewBtn ? juce::Button::ConnectedOnRight : juce::Button::ConnectedOnLeft);
+        addAndMakeVisible(b);
+    }
+    progViewBtn.onClick = [this] { setMixView(false, true); };
+    mixViewBtn.onClick = [this] { setMixView(true, true); };
+    progViewBtn.setTooltip("List the 128 programs of this bank (same as PROGRAM on the panel)");
+    mixViewBtn.setTooltip("List the 100 mixes of this bank (same as MIX on the panel)");
+    progViewBtn.setToggleState(true, juce::dontSendNotification);
     importFolderBtn.onClick = [this] { importFolder(); };
     importOneBtn.onClick = [this] { importOneSyx(); };
     editBtn.onClick = [this] { openInEditor(selectedProgram()); };
@@ -308,7 +458,8 @@ void LibraryTab::showBank(int b) {
     if (b >= kFirstCardBank) cardBankBox.setSelectedId(b - kFirstCardBank + 1, juce::dontSendNotification);
     for (int i = 0; i < bankButtons.size(); ++i)
         bankButtons[i]->setToggleState(i < 5 ? i == b : b >= kFirstCardBank, juce::dontSendNotification);
-    readBtn.setButtonText("Read " + bankTitle(b) + " from QS");
+    readBtn.setButtonText("Read " + bankTitle(b) + (mixView ? " mixes" : "") + " from QS");
+    readAllBtn.setButtonText(mixView ? "Read the mixes of all banks" : "Read all banks from QS");
     copyToCardBtn.setVisible(b >= kFirstCardBank);
     rebuildRows();
     updateLcd();
@@ -322,30 +473,33 @@ void LibraryTab::refresh() {
 void LibraryTab::rebuildRows() {
     const auto q = search.getText().trim();
     rows.clear();
-    for (int p = 0; p < 128; ++p)
-        if (q.isEmpty() || session.library.nameOf(bank, p).containsIgnoreCase(q) || juce::String(p) == q) rows.push_back(p);
+    for (int p = 0; p < count(); ++p)
+        if (q.isEmpty() || nameAt(p).containsIgnoreCase(q) || juce::String(p) == q) rows.push_back(p);
     list.updateContent();
     list.repaint();
     suppressSend = true;
     list.deselectAllRows();
-    if (session.currentBank == bank)
+    if (currentBankShown() == bank)
         for (size_t i = 0; i < rows.size(); ++i)
-            if (rows[i] == session.currentProgram) list.selectRow(int(i));
+            if (rows[i] == currentNumber()) list.selectRow(int(i));
     suppressSend = false;
 
-    const int n = session.library.countRead(bank);
-    const auto& src = session.library.source[size_t(bank)];
+    const int n = mixView ? session.library.countMixesRead(bank) : session.library.countRead(bank);
+    const auto& src = mixView ? session.library.mixSource[size_t(bank)] : session.library.source[size_t(bank)];
+    const juce::String what = mixView ? "mixes" : "programs";
+    const auto readLabel = "\"Read " + bankTitle(bank) + (mixView ? " mixes" : "") + " from QS\"";
     juce::String text;
-    if (n == 0)
-        text = "No names for " + bankTitle(bank) + " yet. Click \"Read " + bankTitle(bank) + " from QS\"" +
-               (bank >= 1 && bank <= 4 ? juce::String(", or import the Alesis factory banks.") : juce::String("."));
+    if (n == 0 && session.library.hasBuiltInNames(bank))
+        text = juce::String("Factory ") + (mixView ? "mix" : "program") + " names (built into QS Studio). If you've changed this bank, click " + readLabel + " to get your own.";
+    else if (n == 0)
+        text = "No " + what + " names for " + bankTitle(bank) + " yet. Click " + readLabel + ".";
     else if (src.startsWith("your "))
         text = "Names read from " + src + ".";
     else if (src.isNotEmpty())
         text = "Names imported from " + src + ". If this bank on your QS has been changed, read it from the QS to be sure they match.";
     else
-        text = juce::String(n) + " of 128 programs known.";
-    sourceLabel.setText(text, juce::dontSendNotification);
+        text = juce::String(n) + " of " + juce::String(count()) + " " + what + " known.";
+    sourceLabel.setText(text + "  Saved for your " + session.library.model + ".", juce::dontSendNotification);
 }
 
 void LibraryTab::selectProgram(int prog) {
@@ -363,14 +517,20 @@ void LibraryTab::selectProgram(int prog) {
 
 void LibraryTab::updateLcd() {
     if (panel) panel->sync();
+    if (mixView) {
+        // Like the QS6 in Mix mode: "MIX PRESET2 43" over the mix name.
+        const auto mixName = session.library.mixNameOf(session.currentMixBank, session.currentMix);
+        lcd.setLines(mixName.isNotEmpty() ? mixName : "Mix " + juce::String(session.currentMix).paddedLeft('0', 2),
+                     {"MIX " + bankTitle(session.currentMixBank).toUpperCase().removeCharacters(" ") + "  " + juce::String(session.currentMix).paddedLeft('0', 2),
+                      !session.midi.isOpen() ? juce::String("NOT CONNECTED: see Connection")
+                      : session.canSelectMixes() ? "Mixes change on MIDI channel " + juce::String(session.mixSelectChannel())
+                                                 : juce::String("Program Select is not set to a channel")});
+        return;
+    }
     const auto name = session.library.nameOf(session.currentBank, session.currentProgram);
     // On the QSR the VALUE knob edits whichever field the cursor is on; mark it with > like a cursor.
     const auto target = panel ? panel->knobTarget() : FrontPanel::Target::Program;
     auto field = [&](FrontPanel::Target t, const juce::String& s) { return (target == t && !panel->isQs6() ? ">" : "") + s; };
-    if (panel && panel->inMixMode()) {
-        lcd.setLines("MIX MODE", {"Mixes aren't listed in QS Studio yet.", "Press PROGRAM to go back."});
-        return;
-    }
     lcd.setLines(name.isNotEmpty() ? name : juce::String("Program ") + juce::String(session.currentProgram).paddedLeft('0', 3),
                  {field(FrontPanel::Target::Bank, "BANK: " + bankTitle(session.currentBank).toUpperCase()) + "  " +
                       field(FrontPanel::Target::Program, "PROG " + juce::String(session.currentProgram).paddedLeft('0', 3)) + "  " +
@@ -381,7 +541,7 @@ void LibraryTab::updateLcd() {
 
 int LibraryTab::selectedProgram() const {
     const int r = list.getSelectedRow();
-    return r >= 0 && r < int(rows.size()) ? rows[size_t(r)] : session.currentProgram;
+    return r >= 0 && r < int(rows.size()) ? rows[size_t(r)] : currentNumber();
 }
 
 void LibraryTab::paintListBoxItem(int row, juce::Graphics& g, int w, int h, bool selected) {
@@ -396,12 +556,12 @@ void LibraryTab::paintListBoxItem(int row, juce::Graphics& g, int w, int h, bool
     }
     g.setFont(theme::monoFont(14.0f));
     g.setColour(selected ? theme::text : theme::dim);
-    g.drawText(juce::String(p).paddedLeft('0', 3), 10, 0, 50, h, juce::Justification::centredLeft);
-    const auto name = session.library.nameOf(bank, p);
+    g.drawText(juce::String(p).paddedLeft('0', mixView ? 2 : 3), 10, 0, 50, h, juce::Justification::centredLeft);
+    const auto name = nameAt(p);
     g.setFont(theme::uiFont(15.0f, selected));
     g.setColour(name.isEmpty() ? theme::dim.withAlpha(0.6f) : theme::text);
     g.drawText(name.isEmpty() ? juce::String("(not read yet)") : name, 64, 0, w - 100, h, juce::Justification::centredLeft);
-    if (session.currentBank == bank && session.currentProgram == p) {
+    if (currentBankShown() == bank && currentNumber() == p) {
         g.setColour(theme::accent);
         g.fillEllipse(float(w - 22), float(h) * 0.5f - 4.0f, 8.0f, 8.0f);
     }
@@ -410,7 +570,7 @@ void LibraryTab::paintListBoxItem(int row, juce::Graphics& g, int w, int h, bool
 void LibraryTab::selectedRowsChanged(int row) {
     if (suppressSend || row < 0 || row >= int(rows.size())) return;
     pendingSelect = rows[size_t(row)];
-    if (panel) panel->leaveMixMode();
+    if (panel) panel->sync();
     startTimer(90);  // debounce while arrowing through the list
 }
 
@@ -419,7 +579,8 @@ void LibraryTab::timerCallback() {
     if (pendingSelect < 0) return;
     const int p = pendingSelect;
     pendingSelect = -1;
-    if (session.midi.isOpen()) session.selectProgram(bank, p);
+    if (mixView) selectMixOnQs(p);
+    else if (session.midi.isOpen()) session.selectProgram(bank, p);
     else {
         session.currentBank = bank;
         session.currentProgram = p;
@@ -429,7 +590,88 @@ void LibraryTab::timerCallback() {
 }
 
 void LibraryTab::listBoxItemDoubleClicked(int row, const juce::MouseEvent&) {
-    if (row >= 0 && row < int(rows.size())) openInEditor(rows[size_t(row)]);
+    if (!mixView && row >= 0 && row < int(rows.size())) openInEditor(rows[size_t(row)]);
+}
+
+int LibraryTab::count() const { return mixView ? 100 : 128; }
+juce::String LibraryTab::nameAt(int n) const { return mixView ? session.library.mixNameOf(bank, n) : session.library.nameOf(bank, n); }
+int LibraryTab::currentBankShown() const { return mixView ? session.currentMixBank : session.currentBank; }
+int LibraryTab::currentNumber() const { return mixView ? session.currentMix : session.currentProgram; }
+
+void LibraryTab::setMixView(bool mix, bool switchQs) {
+    mixView = mix;
+    progViewBtn.setToggleState(!mix, juce::dontSendNotification);
+    mixViewBtn.setToggleState(mix, juce::dontSendNotification);
+    for (auto* b : {&editBtn, &sendBtn, &storeBtn}) b->setEnabled(!mix);
+    if (panel) panel->setMixMode(mix);
+    showBank(bank);
+    if (!switchQs || !session.midi.isOpen()) return;
+    if (mix) {
+        if (session.canSelectMixes()) session.selectMix(session.currentMixBank, session.currentMix);
+        else {
+            session.midi.send(qs::modeSelect(1));  // Mix mode, on whichever mix the QS was on
+            session.mixModeSent = true;
+            session.programModeSent = false;
+        }
+    } else {
+        session.programModeSent = false;
+        session.selectProgram(session.currentBank, session.currentProgram);
+    }
+    updateLcd();
+}
+
+// Picking a mix needs Program Select set to a channel; offer to set it to QS Studio's channel.
+void LibraryTab::selectMixOnQs(int mix) {
+    session.currentMixBank = bank;
+    session.currentMix = mix;
+    if (!session.midi.isOpen()) {
+        updateLcd();
+        return;
+    }
+    if (session.canSelectMixes()) {
+        session.selectMix(bank, mix);
+        return;
+    }
+    updateLcd();
+    if (!session.globalKnown) {
+        session.midi.send(qs::globalRequest());
+        if (session.setStatus) session.setStatus("Checking the QS's Program Select setting... click the mix again in a moment.");
+        return;
+    }
+    if (askedProgramSelect) {
+        if (session.setStatus) session.setStatus("The QS only changes mixes over MIDI when MIDI Program Select is set to a channel (Global Settings).");
+        return;
+    }
+    askedProgramSelect = true;
+    const int ch = session.channel;
+    juce::AlertWindow::showAsync(
+        juce::MessageBoxOptions()
+            .withIconType(juce::MessageBoxIconType::QuestionIcon)
+            .withTitle("Let QS Studio pick mixes?")
+            .withMessage("The QS only changes mixes from MIDI when Global > MIDI Program Select is set to a channel, not \"On\". "
+                         "Set it to channel " + juce::String(ch) + " (QS Studio's channel) now?\n\n"
+                         "Programs still change on that channel in Program mode. You can change it back on the Global Settings page.")
+            .withButton("Set it to channel " + juce::String(ch))
+            .withButton("Not now"),
+        [this, ch](int r) {
+            if (r != 1) return;
+            session.setProgramSelect(ch + 1);
+            session.midi.send(qs::globalRequest());  // refresh the Global page from the QS
+            session.selectMix(session.currentMixBank, session.currentMix);
+            updateLcd();
+        });
+}
+
+void LibraryTab::readMixes(std::vector<int> banks) {
+    if (!session.midi.isOpen()) {
+        alert("Not connected", "Connect to the QS on the Connection page first.");
+        return;
+    }
+    (new ReadMixesJob(session, std::move(banks), [this](juce::String result) {
+        refresh();
+        if (session.setStatus) session.setStatus("Read from QS: " + result.upToFirstOccurrenceOf("\n", false, false));
+        if (result.contains("\n")) alert("Read mixes from QS", result);
+    }))->launchThread();
 }
 
 void LibraryTab::step(int delta) {
@@ -465,14 +707,17 @@ void LibraryTab::importOneSyx() {
     chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this](const juce::FileChooser& fc) {
         auto f = fc.getResult();
         if (!f.existsAsFile()) return;
-        const int n = session.library.importFile(f, bank, f.getFileName());
-        if (n == 0) {
-            alert("No programs", f.getFileName() + " has no QS program dumps.");
+        int mixes = 0;
+        const int n = session.library.importFile(f, bank, f.getFileName(), &mixes);
+        if (n == 0 && mixes == 0) {
+            alert("Nothing to import", f.getFileName() + " has no QS program or mix dumps.");
             return;
         }
         session.library.save();
         refresh();
-        if (session.setStatus) session.setStatus("Imported " + juce::String(n) + " programs from " + f.getFileName() + " into " + bankTitle(bank) + ".");
+        if (session.setStatus)
+            session.setStatus("Imported " + juce::String(n) + " programs and " + juce::String(mixes) + " mixes from " + f.getFileName() + " into " +
+                              bankTitle(bank) + ".");
     });
 }
 
@@ -526,7 +771,7 @@ void LibraryTab::importFolderWithMap(const juce::File& dir, const juce::StringPa
     int banks = 0;
     for (auto& name : map.getAllKeys()) {
         const int b = map[name].getIntValue();
-        if (session.library.importFile(dir.getChildFile(name), b, name) > 0) ++banks;
+        if (session.library.importFile(dir.getChildFile(name), b, name) > 0) ++banks;  // programs and mixes
     }
     juce::StringArray kv;
     for (auto& name : map.getAllKeys()) kv.add(name + "=" + map[name]);
@@ -805,6 +1050,9 @@ void LibraryTab::resized() {
     auto right = r.removeFromRight(280);
     r.removeFromRight(14);
     auto searchRow = r.removeFromTop(34);
+    progViewBtn.setBounds(searchRow.removeFromLeft(100));
+    mixViewBtn.setBounds(searchRow.removeFromLeft(80));
+    searchRow.removeFromLeft(10);
     nextBtn.setBounds(searchRow.removeFromRight(40));
     searchRow.removeFromRight(6);
     prevBtn.setBounds(searchRow.removeFromRight(40));

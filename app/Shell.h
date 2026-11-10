@@ -58,11 +58,17 @@ public:
     }
     int getSelected() const { return selected; }
     std::function<void(int)> onSelect;
+    juce::String footer;  // small print at the bottom
 
     void paint(juce::Graphics& g) override {
         g.fillAll(theme::panel);
         g.setColour(theme::line);
         g.drawVerticalLine(getWidth() - 1, 0.0f, float(getHeight()));
+        if (footer.isNotEmpty()) {
+            g.setColour(theme::dim.withAlpha(0.8f));
+            g.setFont(theme::uiFont(11.0f));
+            g.drawFittedText(footer, getLocalBounds().removeFromBottom(70).reduced(18, 8), juce::Justification::bottomLeft, 5, 1.0f);
+        }
         juce::String lastGroup;
         for (int i = 0; i < int(items.size()); ++i) {
             if (items[size_t(i)].group != lastGroup) {

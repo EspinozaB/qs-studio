@@ -45,6 +45,16 @@ std::string decodeName(const Bytes& buf, int startBit, int chars = 10);
 // ---- Message builders ----
 Bytes deviceInquiry();                                  // F0 7E 7F 06 01 F7
 Bytes allDumpRequest();                                 // opcode 0C
+Bytes mixRequest(int mix);                              // opcode 0F: 0-99 user mixes, 100 = mix edit buffer
+
+// A mix from a New (0E) or Old (04) Mix Dump: its number (0-99, 100 = edit buffer), name and unpacked data.
+struct MixInfo {
+    int number = 0;
+    std::string name;
+    Bytes data;
+    bool oldFormat = false;
+};
+std::optional<MixInfo> parseMixDump(const Bytes& msg);
 Bytes sectorErase(int sector);                          // opcode 11
 Bytes sectorRequest(int sector, int block);             // opcode 13
 Bytes sectorWrite(int sector, int block, const uint8_t* data1024);  // opcode 12

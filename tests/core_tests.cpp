@@ -113,6 +113,21 @@ int main(int argc, char** argv) {
                 std::printf("    QS7/8/R -> QS6: %d sample refs renumbered, %d with no QS6 match\n", changed, missing);
                 CHECK(toQs6.messages.size() == msgs.size());
             }
+            {
+                int mixes = 0;
+                std::string first, last;
+                for (auto& m : msgs)
+                    if (auto mi = qs::parseMixDump(m)) {
+                        ++mixes;
+                        CHECK(mi->number < 100 && mi->data.size() == qs::kNewMixBytes);
+                        if (first.empty()) first = mi->name;
+                        last = mi->name;
+                    }
+                std::printf("    mixes parsed: %d ('%s' ... '%s')\n", mixes, first.c_str(), last.c_str());
+                CHECK(mixes == 100);
+                auto rq = qs::mixRequest(100);
+                CHECK(rq.size() == 8 && rq[5] == 0x0F && rq[6] == 100);
+            }
             auto sum = qs::summarize(msgs);
             std::cout << s << ": programs=" << sum.programs << " mixes=" << sum.mixes << " effects=" << sum.effects
                       << " globals=" << sum.globals << " first='" << (sum.programNames.empty() ? "" : sum.programNames[0].second)

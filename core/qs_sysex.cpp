@@ -69,6 +69,28 @@ Bytes deviceInquiry() { return {0xF0, 0x7E, 0x7F, 0x06, 0x01, 0xF7}; }
 
 Bytes allDumpRequest() { auto m = header(AllDumpRequest); m.push_back(0xF7); return m; }
 
+Bytes mixRequest(int mix) {
+    auto m = header(NewMixRequest);
+    m.push_back(uint8_t(mix & 0x7F));
+    m.push_back(0xF7);
+    return m;
+}
+
+std::optional<MixInfo> parseMixDump(const Bytes& msg) {
+    const int op = opcodeOf(msg);
+    if (op != NewMixDump && op != OldMixDump) return std::nullopt;
+    const bool old = op == OldMixDump;
+    const size_t bytes = old ? kOldMixBytes : kNewMixBytes;
+    if (msg.size() < 8 + packedSize(bytes)) return std::nullopt;
+    MixInfo mi;
+    mi.number = msg[6] & 0x7F;
+    mi.oldFormat = old;
+    mi.data = unpack7(&msg[7], packedSize(bytes), bytes);
+    // Name: new format starts at bit 0:5, old format at 1:5 (QS SysEx spec, mix data formats).
+    mi.name = decodeName(mi.data, old ? 13 : 5);
+    return mi;
+}
+
 Bytes sectorErase(int sector) {
     auto m = header(SectorErase);
     m.push_back(uint8_t(sector & 0x7F));

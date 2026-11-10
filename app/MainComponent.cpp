@@ -318,7 +318,8 @@ MainComponent::MainComponent() {
          "The front panel works like the synth's. QS6: a group key (00-120) picks the tens and 0-9 the ones, VALUE steps "
          "programs, BANK steps banks, PAGE changes the MIDI channel. QSR: turn VALUE (drag or mouse wheel); CURSOR moves it "
          "to the bank, MIDI CH to the channel. Hover any key to see what it does on the hardware.\n"
-         "3. Names come from the QS (Read this bank) or from .syx files you import. The line under the list says where they came from.\n"
+         "3. Programs / Mixes (or PROGRAM / MIX on the panel) switches the list. Factory names are built in; Read this bank gets "
+         "yours from the QS, or import .syx files. The line under the list says where the names came from.\n"
          "4. Audition sends a program into the QS's edit buffer to try it without storing. Store to User writes it to a User slot.",
          "Browse banks and play programs", library},
         {"Edit", "Program Editor",
@@ -368,6 +369,9 @@ MainComponent::MainComponent() {
         addChildComponent(p.comp);
     }
     sidebar.setItems(items);
+    sidebar.footer = "QS Studio " + juce::String(ProjectInfo::versionString) +
+                     ". Unofficial, not made or endorsed by Alesis or inMusic. Alesis, QuadraSynth and the QS model names are "
+                     "trademarks of their owners and are used only to say which synths this works with.";
     sidebar.onSelect = [this](int i) { showPage(i); };
     addAndMakeVisible(sidebar);
     addAndMakeVisible(header);
@@ -379,6 +383,10 @@ MainComponent::MainComponent() {
     };
     session.setStatus = [this](const juce::String& s) { statusLabel.setText(s, juce::dontSendNotification); };
     session.channelChanged = [this] { channelBox.setSelectedId(session.channel, juce::dontSendNotification); };
+    session.libraryChanged = [this] {
+        library->refresh();
+        connection->refreshFiles();
+    };
     session.midi.addListener(this);
 
     // ---- top bar
@@ -495,6 +503,7 @@ MainComponent::~MainComponent() {
     session.openInEditor = nullptr;
     session.setStatus = nullptr;
     session.channelChanged = nullptr;
+    session.libraryChanged = nullptr;
     for (auto& p : pages) removeChildComponent(p.comp);
 }
 
@@ -542,6 +551,9 @@ void MainComponent::sysexReceived(const qs::Bytes& msg) {
     if (auto d = qs::parseDeviceReply(msg)) {
         session.deviceName = juce::String(d->model) + " v" + juce::String(d->version);
         settings().setValue("lastModel", juce::String(d->model));
+        session.library.switchModel(juce::String(d->model));  // each model keeps its own banks
+        library->refresh();
+        connection->refreshFiles();
         statusLabel.setText("Connected to " + session.deviceName, juce::dontSendNotification);
         session.programModeSent = false;
         library->applySavedImports(true);  // fill empty banks from the .syx folder the user imported before

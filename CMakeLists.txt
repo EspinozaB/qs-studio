@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(QSStudio VERSION 0.8.1 LANGUAGES C CXX)
+project(QSStudio VERSION 0.9.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 # Core library: no JUCE, testable anywhere.
-add_library(qscore STATIC core/qs_sysex.cpp core/qs_card.cpp core/qs_program.cpp core/qs_samples.cpp)
+add_library(qscore STATIC core/qs_sysex.cpp core/qs_card.cpp core/qs_program.cpp core/qs_samples.cpp core/qs_factory.cpp)
 target_include_directories(qscore PUBLIC core)
 
 add_executable(core_tests tests/core_tests.cpp)

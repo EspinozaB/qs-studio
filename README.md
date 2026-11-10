@@ -32,10 +32,23 @@ Change it under **Panel look**.
 The strip along the bottom plays the QS on the chosen MIDI channel: keyboard (your computer keys work too), pitch wheel, mod wheel,
 Controller A (A-D on models with four sliders) and volume. **Hide keyboard** folds it away.
 
-**Names for every bank:** Programs > **Read all banks from QS** reads User, Preset 1-3 and GenMIDI straight from the synth (a few minutes, once).
-Or **Import a folder of .syx banks** and choose which file fills which bank (the Alesis factory `Q678PST1`-`4` files from the
-[Alesis Archive Project](https://github.com/jzemeocala/Alesis-Archive-Project/tree/HEAD/BANKS/FACTORY) are matched automatically).
-Imports only change QS Studio's list; to write a bank to the synth use Backup & Restore. No Alesis data ships with QS Studio.
+**Names for every bank, programs and mixes:** the factory names of Preset 1-3 and GenMIDI (programs and mixes) are built in, so
+they show straight away. **Programs / Mixes** (or PROGRAM / MIX on the panel) switches the list. **Read all banks from QS** reads your
+own User, Preset and GenMIDI programs, or mixes, straight from the synth (a few minutes, once). Or **Import a folder of .syx banks** and
+choose which file fills which bank (the factory `Q678PST1`-`4` files from the
+[Alesis Archive Project](https://github.com/jzemeocala/Alesis-Archive-Project/tree/HEAD/BANKS/FACTORY) are matched automatically;
+programs and mixes are both imported). Imports only change QS Studio's list; to write a bank to the synth use Backup & Restore.
+
+Picking mixes over MIDI: the QS only changes mixes on program changes when Global > MIDI Program Select is set to a **channel**
+(not "On"). QS Studio offers to set it to its channel the first time you pick a mix. Reading Preset mixes sets it for the read and
+puts your setting back afterwards.
+
+**Where things are saved:** one folder, next to the program if it can write there (portable), otherwise `%AppData%\QS Studio`.
+The Connection page shows it and opens it.
+- `QSStudio.<model>.library`: what was read or imported, **one file per model** (`QSStudio.QS6.library`, `QSStudio.QSR.library`),
+  so two synths never overwrite each other. Export / Import on the Connection page to keep a copy or share one.
+- `Backups\`: backups made on the Backup & Restore page.
+- `QSStudio.settings`: MIDI ports, look, last model and other choices.
 
 **QS6 and QS7/QS8/QSR banks:** the QS6 has its own sample ROM; the QS7, QS8 and QSR share another. A program stores only a sample
 group and number, so a QS6 program can play a different sample on a QSR. **Move banks QS6 <-> QSR** (or Programs > **Convert a bank file**) rewrites each
@@ -78,6 +91,20 @@ See `core/qs_card.cpp`. Summary:
 2. Editor (programs, mixes, effects, global; live editing with opcode 10)
 3. QS player VST3 / standalone using your own card images and decoded programs
 4. 1:1 emulation core (needs the firmware EPROM dump and the sound/effects ASICs emulated)
+
+## Trademarks, copyright and what ships
+
+QS Studio is an unofficial, independent project. It is not made, sponsored or endorsed by Alesis or inMusic Brands.
+Alesis, QuadraSynth and the QS model names are trademarks of their owners and are used here only to say which synths QS Studio
+works with. The front panels are drawn from scratch to show where the controls are; they carry the model name in plain text and
+no maker's logo or stylised model logo.
+
+What is in this repository and the release: our own code and drawings, parameter layouts and sample/function name tables taken
+as facts from the published QS manuals and SysEx spec, and the 10-character factory preset and mix **names** (no program, mix,
+effect or sample data). What is never included or published: ROM dumps, card images, factory or user bank `.syx` files, and samples.
+Those stay on your own computer (`.gitignore` blocks them).
+
+This is a practical summary, not legal advice.
 
 ## Thanks
 

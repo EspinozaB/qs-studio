@@ -2,3 +2,12 @@ build/
 out/
 *.img
 *.syx
+*.SYX
+*.IMG
+*.bin
+*.BIN
+*.library
+*.library.old
+*.wav
+*.WAV
+Backups/

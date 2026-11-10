@@ -32,6 +32,12 @@ private:
     juce::ComboBox inBox, outBox;
     juce::TextButton refreshBtn{"Refresh list"}, connectBtn{"Connect"}, identifyBtn{"Ask the QS what it is"};
     juce::TextEditor logBox;
+    Section filesSec{"Your files", ""};
+    juce::TextButton openFolderBtn{"Open the folder"}, exportLibBtn{"Export a library..."}, importLibBtn{"Import a library..."};
+    std::unique_ptr<juce::FileChooser> chooser;
+    void updateFilesText();
+public:
+    void refreshFiles() { updateFilesText(); }
 };
 
 class BackupPage : public juce::Component, private MidiLink::Listener {

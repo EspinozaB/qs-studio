@@ -127,6 +127,51 @@ ConnectionPage::ConnectionPage(Session& s) : session(s) {
     identifyBtn.setTooltip("Asks the synth for its model and software version. If nothing comes back, check both cables and the I/O setting.");
     session.midi.addListener(this);
     refreshDevices();
+
+    addAndMakeVisible(filesSec);
+    for (auto* b : {&openFolderBtn, &exportLibBtn, &importLibBtn}) addAndMakeVisible(b);
+    openFolderBtn.onClick = [] { settingsDir().startAsProcess(); };
+    exportLibBtn.setTooltip("Saves a copy of this model's library (names and programs read from your synth) to share or keep.");
+    importLibBtn.setTooltip("Replaces this model's library with one you exported, or one someone shared with you.");
+    exportLibBtn.onClick = [this] {
+        session.library.save();
+        const auto src = session.library.file();
+        chooser = std::make_unique<juce::FileChooser>("Export the library", juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+                                                                                 .getChildFile(src.getFileName()), "*.library");
+        chooser->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting, [src](const juce::FileChooser& fc) {
+            auto f = fc.getResult();
+            if (f != juce::File()) src.copyFileTo(f.withFileExtension("library"));
+        });
+    };
+    importLibBtn.onClick = [this] {
+        chooser = std::make_unique<juce::FileChooser>("Import a library for your " + session.library.model, juce::File(), "*.library");
+        chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this](const juce::FileChooser& fc) {
+            auto f = fc.getResult();
+            if (!f.existsAsFile()) return;
+            session.library.save();
+            session.library.file().copyFileTo(session.library.file().withFileExtension("library.before-import"));
+            if (!session.library.loadFrom(f)) {
+                alert("Import", f.getFileName() + " isn't a QS Studio library.");
+                return;
+            }
+            session.library.save();
+            if (session.libraryChanged) session.libraryChanged();
+            alert("Import", "Imported " + f.getFileName() + " as your " + session.library.model + " library. The previous one was kept as " +
+                                session.library.file().withFileExtension("library.before-import").getFileName() + ".");
+        });
+    };
+    updateFilesText();
+}
+
+void ConnectionPage::updateFilesText() {
+    filesSec.body = "QS Studio keeps everything in one folder: next to the QS Studio program if it can write there (so it stays portable on a USB "
+                    "stick), otherwise in your user AppData folder.\n"
+                    "This copy uses: " + settingsDir().getFullPathName() + "\n"
+                    "- QSStudio.<model>.library: names, programs and mixes read from each synth (one file per model, so your QS6 "
+                    "and QSR don't overwrite each other). This one is QSStudio." + session.library.model + ".library.\n"
+                    "- Backups: the backups you make.  - QSStudio.settings: ports, look and other choices.";
+    resized();
+    repaint();
 }
 
 ConnectionPage::~ConnectionPage() { session.midi.removeListener(this); }
@@ -208,6 +253,15 @@ void ConnectionPage::resized() {
     row.removeFromLeft(16);
     status.setBounds(row);
     r.removeFromTop(12);
+    const int filesH = filesSec.heightFor(r.getWidth(), 40);
+    filesSec.setBounds(r.removeFromBottom(filesH));
+    auto fb = filesSec.contentArea().removeFromTop(34);
+    openFolderBtn.setBounds(fb.removeFromLeft(160));
+    fb.removeFromLeft(10);
+    exportLibBtn.setBounds(fb.removeFromLeft(180));
+    fb.removeFromLeft(10);
+    importLibBtn.setBounds(fb.removeFromLeft(180));
+    r.removeFromBottom(12);
     logBox.setBounds(r);
 }
 
@@ -491,7 +545,7 @@ GlobalPage::GlobalPage(Session& s) : session(s) {
         session.global.programSelect = progSelect.getSelectedId() - 1;
         sendGlobal(5, 0, progSelect.getSelectedId() - 1);
     };
-    progSelect.setTooltip("QS Studio switches programs with program changes, so this needs to be On.");
+    progSelect.setTooltip("QS Studio switches programs with program changes, so this must not be Off. To pick mixes from QS Studio it has to be a channel (the one QS Studio uses).");
     addAndMakeVisible(progSelect);
     gmToggle.onClick = [this] {
         if (!loading) sendGlobal(0, 1, gmToggle.getToggleState() ? 1 : 0);
