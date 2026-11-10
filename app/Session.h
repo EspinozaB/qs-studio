@@ -7,6 +7,7 @@
 #include <optional>
 
 #include "../core/qs_program.h"
+#include "../core/qs_samples.h"
 #include "MidiLink.h"
 
 juce::File settingsDir();
@@ -131,6 +132,11 @@ struct Session : private juce::MidiKeyboardState::Listener, private juce::MidiIn
     juce::String deviceName;  // from Identify, e.g. "QS6 v2.00"
     qs::GlobalSettings global;  // read from the QS after Identify; factory defaults until then
     bool globalKnown = false;
+    // Which sample ROM the connected (or last connected) synth has: the QS6's own, or the QS7/QS8/QSR one.
+    qs::RomSet romSet() const {
+        const auto model = (deviceName.isNotEmpty() ? deviceName : settings().getValue("lastModel", "QSR")).upToFirstOccurrenceOf(" ", false, false);
+        return qs::romSetForModel(model.toStdString());
+    }
     // The original QS6 has one assignable slider (Controller A); the other models have four (A-D).
     bool hasOneControllerSlider() const { return deviceName.startsWith("QS6 "); }
 

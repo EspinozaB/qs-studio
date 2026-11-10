@@ -1,5 +1,7 @@
 #include "LibraryTab.h"
 
+#include "../core/qs_samples.h"
+
 namespace {
 
 void alert(const juce::String& title, const juce::String& msg) {
@@ -121,12 +123,12 @@ void sendPaced(Session& s, const std::vector<qs::Bytes>& msgs, juce::ThreadWithP
     }
 }
 
-// Step 1 of "copy a bank to the card": back up the User bank (Send All), then load the chosen bank into User.
+// Step 1 of "copy a bank to the card": back up the User bank (Send All), then load the chosen data into User.
 class CardCopyPrepJob : public juce::ThreadWithProgressWindow {
 public:
-    CardCopyPrepJob(Session& s, int src, juce::File backupFile, std::function<void(bool, juce::String)> done)
-        : ThreadWithProgressWindow("Copy to card: preparing the QS", true, true), session(s), source(src), backup(backupFile),
-          onDone(std::move(done)) {}
+    CardCopyPrepJob(Session& s, std::vector<qs::Bytes> toSend, juce::String what, juce::File backupFile, std::function<void(bool, juce::String)> done)
+        : ThreadWithProgressWindow("Copy to card: preparing the QS", true, true), session(s), msgs(std::move(toSend)), label(std::move(what)),
+          backup(backupFile), onDone(std::move(done)) {}
 
     void run() override {
         auto& midi = session.midi;
@@ -150,13 +152,10 @@ public:
         backup.getParentDirectory().createDirectory();
         backup.replaceWithData(all.data(), all.size());
 
-        setStatusMessage("Loading " + bankTitle(source) + " into the User bank...");
-        std::vector<qs::Bytes> msgs;
-        for (int p = 0; p < 128; ++p)
-            if (auto& prog = session.library.programs[size_t(source)][size_t(p)]) msgs.push_back(prog->userDump(p));
+        setStatusMessage("Loading " + label + " into the User bank...");
         sendPaced(session, msgs, this);
         ok = !threadShouldExit();
-        message = ok ? "Your User bank is backed up to " + backup.getFileName() + " and now holds " + bankTitle(source) + "."
+        message = ok ? "Your User bank is backed up to " + backup.getFileName() + " and now holds " + label + "."
                      : "Cancelled. Your backup is in " + backup.getFullPathName() + " (send it with the SysEx Librarian to restore).";
     }
 
@@ -167,7 +166,8 @@ public:
 
 private:
     Session& session;
-    int source;
+    std::vector<qs::Bytes> msgs;
+    juce::String label;
     juce::File backup;
     bool ok = false;
     juce::String message;
@@ -231,6 +231,10 @@ LibraryTab::LibraryTab(Session& s) : session(s) {
                                                                     &editBtn, &sendBtn, &storeBtn, &factoryLink, &sourceLabel})
         addAndMakeVisible(c);
     addChildComponent(copyToCardBtn);
+    addAndMakeVisible(convertBtn);
+    convertBtn.onClick = [this] { convertBankFile(); };
+    convertBtn.setTooltip("Rewrites a bank file (for example your QS6 Send All backup) so each program points at the same-named samples "
+                          "on the other model. Saves a new .syx and a report of every change and every sample with no match.");
     copyToCardBtn.onClick = [this] { copyBankToCard(); };
     copyToCardBtn.setTooltip("Puts a whole bank (for example your QS6 User bank) onto this card bank. QS Studio backs up your User bank, "
                              "loads the bank you pick, tells you which buttons to press on the QS, checks the card, then restores your User bank.");
@@ -570,68 +574,162 @@ void LibraryTab::copyBankToCard() {
     juce::Array<int> ids;
     for (int b = 0; b < int(kBanks.size()); ++b)
         if (b != cardBank && session.library.countRead(b) == 128) {
-            choices.add(bankTitle(b) + "  (" + (session.library.source[size_t(b)].isNotEmpty() ? session.library.source[size_t(b)] : juce::String("known")) + ")");
+            choices.add(bankTitle(b) + "  (programs only, " +
+                        (session.library.source[size_t(b)].isNotEmpty() ? session.library.source[size_t(b)] : juce::String("known")) + ")");
             ids.add(b);
         }
-    if (ids.isEmpty()) {
-        alert("Nothing to copy", "First fill a bank with all 128 programs: read it from a QS, or import a .syx into it.");
-        return;
-    }
+    choices.add("A .syx bank file: programs, mixes and effects (best)...");
+    ids.add(-1);
     auto* w = new juce::AlertWindow("Copy a bank onto " + bankTitle(cardBank),
-                                    "Which bank should go onto the card?\n\n"
+                                    "What should go onto the card?\n\n"
+                                    "A full bank file (a Send All backup, or one made by Convert) carries each program's effects too. "
                                     "QS Studio backs up your User bank first and restores it at the end. "
                                     "Card bank numbers count across both slots: with one card in slot A, Card 1 is CrdA Bnk1.",
                                     juce::MessageBoxIconType::QuestionIcon);
-    w->addComboBox("src", choices, "Bank to copy");
+    w->addComboBox("src", choices, "Copy");
+    w->getComboBoxComponent("src")->setSelectedItemIndex(choices.size() - 1, juce::dontSendNotification);
     w->addButton("Start", 1, juce::KeyPress(juce::KeyPress::returnKey));
     w->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
     w->enterModalState(true, juce::ModalCallbackFunction::create([this, w, ids, cardBank](int r) {
         if (r != 1) return;
         const int src = ids[w->getComboBoxComponent("src")->getSelectedItemIndex()];
-        const auto backup = settingsDir().getChildFile("Backups").getChildFile(
-            "User_before_card_copy_" + juce::Time::getCurrentTime().formatted("%Y%m%d_%H%M%S") + ".syx");
-        (new CardCopyPrepJob(session, src, backup, [this, src, cardBank, backup](bool ok, juce::String msg) {
-            if (!ok) {
-                alert("Copy to card", msg);
+        if (src >= 0) {
+            std::vector<qs::Bytes> msgs;
+            std::array<std::optional<qs::Program>, 128> expected;
+            for (int p = 0; p < 128; ++p)
+                if (auto& prog = session.library.programs[size_t(src)][size_t(p)]) {
+                    msgs.push_back(prog->userDump(p));
+                    expected[size_t(p)] = prog;
+                }
+            startCardCopy(std::move(msgs), expected, bankTitle(src), cardBank);
+            return;
+        }
+        chooser = std::make_unique<juce::FileChooser>("Bank file to put on the card",
+                                                      juce::File(settings().getValue("importFolder", settingsDir().getFullPathName())), "*.syx;*.SYX");
+        chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this, cardBank](const juce::FileChooser& fc) {
+            auto f = fc.getResult();
+            juce::MemoryBlock mb;
+            if (!f.existsAsFile() || !f.loadFileAsData(mb)) return;
+            auto ptr = static_cast<const uint8_t*>(mb.getData());
+            std::vector<qs::Bytes> msgs;
+            std::array<std::optional<qs::Program>, 128> expected;
+            for (auto& m : qs::splitSysex(qs::Bytes(ptr, ptr + mb.getSize()))) {
+                const int op = qs::opcodeOf(m);
+                // User programs, mixes and effects; never Global (it would change the QS's MIDI settings)
+                if (op == qs::UserProgramDump || op == qs::NewMixDump || op == qs::OldMixDump || op == qs::UserEffectsDump) msgs.push_back(m);
+                if (op == qs::UserProgramDump && m.size() > 6)
+                    if (auto p = qs::Program::fromDump(m)) expected[m[6] & 0x7F] = p;
+            }
+            if (msgs.empty()) {
+                alert("Nothing to copy", f.getFileName() + " has no QS programs, mixes or effects.");
                 return;
             }
-            const int n = cardBank - kFirstCardBank + 1;
-            auto* step = new juce::AlertWindow("Now on the QS",
-                                               msg + "\n\nOn the QS:\n"
-                                               "1. Press STORE.\n"
-                                               "2. Page right until the display shows  Save USER to CrdA Bnk" + juce::String(n) + "\n"
-                                               "   (use the value buttons to change the bank number if needed).\n"
-                                               "3. Press STORE again and wait for it to finish.\n\n"
-                                               "Then click Done. QS Studio will read the card bank back to check it and restore your User bank.",
-                                               juce::MessageBoxIconType::InfoIcon);
-            step->addButton("Done", 1, juce::KeyPress(juce::KeyPress::returnKey));
-            step->addButton("Cancel and restore my User bank", 0, juce::KeyPress(juce::KeyPress::escapeKey));
-            step->enterModalState(true, juce::ModalCallbackFunction::create([this, src, cardBank, backup](int r2) {
-                if (r2 == 1) finishCardCopy(src, cardBank, backup);
-                else
-                    (new RestoreJob(session, backup, [this](juce::String m) { alert("Copy to card", "Cancelled. " + m); }))->launchThread();
-            }), true);
-        }))->launchThread();
+            startCardCopy(std::move(msgs), expected, f.getFileName(), cardBank);
+        });
     }), true);
 }
 
-void LibraryTab::finishCardCopy(int src, int cardBank, juce::File backup) {
-    (new ReadBanksJob(session, {cardBank}, [this, src, cardBank, backup](juce::String) {
+void LibraryTab::startCardCopy(std::vector<qs::Bytes> msgs, std::array<std::optional<qs::Program>, 128> expected, juce::String label, int cardBank) {
+    const auto backup = settingsDir().getChildFile("Backups").getChildFile(
+        "User_before_card_copy_" + juce::Time::getCurrentTime().formatted("%Y%m%d_%H%M%S") + ".syx");
+    (new CardCopyPrepJob(session, std::move(msgs), label, backup, [this, expected, label, cardBank, backup](bool ok, juce::String msg) {
+        if (!ok) {
+            alert("Copy to card", msg);
+            return;
+        }
+        const int n = cardBank - kFirstCardBank + 1;
+        auto* step = new juce::AlertWindow("Now on the QS",
+                                           msg + "\n\nOn the QS:\n"
+                                           "1. Press STORE.\n"
+                                           "2. Page right until the display shows  Save USER to CrdA Bnk" + juce::String(n) + "\n"
+                                           "   (use the value buttons to change the bank number if needed).\n"
+                                           "3. Press STORE again and wait for it to finish.\n\n"
+                                           "Then click Done. QS Studio will read the card bank back to check it and restore your User bank.",
+                                           juce::MessageBoxIconType::InfoIcon);
+        step->addButton("Done", 1, juce::KeyPress(juce::KeyPress::returnKey));
+        step->addButton("Cancel and restore my User bank", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+        step->enterModalState(true, juce::ModalCallbackFunction::create([this, expected, label, cardBank, backup](int r2) {
+            if (r2 == 1) finishCardCopy(expected, label, cardBank, backup);
+            else (new RestoreJob(session, backup, [this](juce::String m) { alert("Copy to card", "Cancelled. " + m); }))->launchThread();
+        }), true);
+    }))->launchThread();
+}
+
+void LibraryTab::finishCardCopy(std::array<std::optional<qs::Program>, 128> expected, juce::String label, int cardBank, juce::File backup) {
+    (new ReadBanksJob(session, {cardBank}, [this, expected, label, cardBank, backup](juce::String) {
         int same = 0, known = 0;
         for (int p = 0; p < 128; ++p) {
-            auto& a = session.library.programs[size_t(src)][size_t(p)];
+            auto& a = expected[size_t(p)];
             auto& b = session.library.programs[size_t(cardBank)][size_t(p)];
             if (a && b) {
                 ++known;
                 same += a->bytes() == b->bytes();
             }
         }
+        session.library.source[size_t(cardBank)] = label + " (copied to the card)";
+        session.library.save();
         showBank(cardBank);
-        const auto verdict = same == 128 ? juce::String("Checked: all 128 programs on ") + bankTitle(cardBank) + " match " + bankTitle(src) + "."
-                                         : "Check: " + juce::String(same) + " of 128 programs match (" + juce::String(known) + " read back). "
-                                           "If that's low, the Save USER to card step may not have run.";
+        const auto verdict = same == known && known > 0 ? "Checked: all " + juce::String(known) + " programs on " + bankTitle(cardBank) + " match " + label + "."
+                                                        : "Check: " + juce::String(same) + " of " + juce::String(known) + " programs match. "
+                                                          "If that's low, the Save USER to card step may not have run.";
         (new RestoreJob(session, backup, [this, verdict](juce::String m) { alert("Copy to card", verdict + "\n\n" + m); }))->launchThread();
     }))->launchThread();
+}
+
+void LibraryTab::convertBankFile() {
+    chooser = std::make_unique<juce::FileChooser>("Bank file to convert (a Send All backup works best)",
+                                                  juce::File(settings().getValue("importFolder", settingsDir().getFullPathName())), "*.syx;*.SYX");
+    chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this](const juce::FileChooser& fc) {
+        auto f = fc.getResult();
+        juce::MemoryBlock mb;
+        if (!f.existsAsFile() || !f.loadFileAsData(mb)) return;
+        auto* w = new juce::AlertWindow("Convert " + f.getFileName(),
+                                        "Which synth was this bank made on, and which synth should it play on?\n"
+                                        "The QS6 has its own sample ROM. The QS7, QS8 and QSR share another one.",
+                                        juce::MessageBoxIconType::QuestionIcon);
+        w->addComboBox("from", {"QS6", "QS7 / QS8 / QSR"}, "Made on");
+        w->addComboBox("to", {"QS6", "QS7 / QS8 / QSR"}, "Play on");
+        const bool looksQs6 = f.getFileName().containsIgnoreCase("QS6");
+        w->getComboBoxComponent("from")->setSelectedItemIndex(looksQs6 || !f.getFileName().containsIgnoreCase("QSR") ? 0 : 1, juce::dontSendNotification);
+        w->getComboBoxComponent("to")->setSelectedItemIndex(w->getComboBoxComponent("from")->getSelectedItemIndex() == 0 ? 1 : 0, juce::dontSendNotification);
+        w->addButton("Convert", 1, juce::KeyPress(juce::KeyPress::returnKey));
+        w->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+        const auto bytes = qs::Bytes(static_cast<const uint8_t*>(mb.getData()), static_cast<const uint8_t*>(mb.getData()) + mb.getSize());
+        w->enterModalState(true, juce::ModalCallbackFunction::create([this, w, f, bytes](int r) {
+            if (r != 1) return;
+            const auto from = w->getComboBoxComponent("from")->getSelectedItemIndex() == 0 ? qs::RomSet::QS6 : qs::RomSet::QS78;
+            const auto to = w->getComboBoxComponent("to")->getSelectedItemIndex() == 0 ? qs::RomSet::QS6 : qs::RomSet::QS78;
+            if (from == to) {
+                alert("Convert", "Pick two different synths.");
+                return;
+            }
+            auto bank = qs::convertBank(qs::splitSysex(bytes), from, to);
+            if (bank.programs.empty()) {
+                alert("Convert", f.getFileName() + " has no QS programs.");
+                return;
+            }
+            const juce::String suffix = to == qs::RomSet::QS6 ? "_for_QS6" : "_for_QSR";
+            const auto outSyx = f.getSiblingFile(f.getFileNameWithoutExtension() + suffix + ".syx");
+            const auto outTxt = f.getSiblingFile(f.getFileNameWithoutExtension() + suffix + "_report.txt");
+            qs::Bytes all;
+            for (auto& m : bank.messages) all.insert(all.end(), m.begin(), m.end());
+            outSyx.replaceWithData(all.data(), all.size());
+            const auto report = juce::String(bank.report(from, to));
+            outTxt.replaceWithText(report);
+            auto* done = new juce::AlertWindow("Converted",
+                                               report.upToFirstOccurrenceOf("\n\n", false, false) + "\n\nSaved:\n" + outSyx.getFileName() + "\n" +
+                                                   outTxt.getFileName() +
+                                                   "\n\nTo use it: send it with the SysEx Librarian, or pick Card > a card bank > "
+                                                   "Copy a bank onto this card bank and choose this file.",
+                                               juce::MessageBoxIconType::InfoIcon);
+            done->addButton("Open report", 1);
+            done->addButton("Close", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+            done->enterModalState(true, juce::ModalCallbackFunction::create([outTxt](int r2) {
+                if (r2 == 1) outTxt.startAsProcess();
+            }), true);
+            if (session.setStatus) session.setStatus("Converted " + juce::String(int(bank.programs.size())) + " programs to " + outSyx.getFileName());
+        }), true);
+    });
 }
 
 void LibraryTab::paint(juce::Graphics& g) {
@@ -671,7 +769,7 @@ void LibraryTab::resized() {
     }
     factoryLink.setBounds(right.removeFromTop(22));
     right.removeFromTop(16);
-    for (auto* b : {&editBtn, &sendBtn, &storeBtn, &copyToCardBtn}) {
+    for (auto* b : {&editBtn, &sendBtn, &storeBtn, &convertBtn, &copyToCardBtn}) {
         b->setBounds(right.removeFromTop(34));
         right.removeFromTop(6);
     }

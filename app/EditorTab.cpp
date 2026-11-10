@@ -63,11 +63,11 @@ juce::String ParamControl::valueLabel(const qs::ParamDef& d, int raw) {
 
 ParamControl::ParamControl(const qs::ParamDef& d, int s, int dr, Change cb, juce::String cap)
     : def(d), sound(s), drum(dr), caption(cap.isNotEmpty() ? cap : titleCase(d.name)), onChange(std::move(cb)) {
-    kind = d.bits == 1 ? Kind::Toggle : (enumLike(d) ? Kind::Combo : Kind::Knob);
+    kind = d.bits == 1 ? Kind::Toggle : (enumLike(d) || nameHas(d.name, "sample number") ? Kind::Combo : Kind::Knob);
     if (kind == Kind::Knob) {
         addAndMakeVisible(knob);
         knob.setRotaryParameters(juce::MathConstants<float>::pi * 1.25f, juce::MathConstants<float>::pi * 2.75f, true);
-        knob.textFromValueFunction = [this](double v) { return valueLabel(def, int(v) - def.offset); };
+        knob.textFromValueFunction = [this](double v) { return label(int(v) - def.offset); };
         knob.setDoubleClickReturnValue(true, double(d.offset < 0 ? 0 : d.offset));
         knob.setPopupDisplayEnabled(true, false, nullptr);
         knob.onValueChange = [this] { if (!loading && onChange) onChange(sound, def, drum, int(knob.getValue())); };
@@ -87,9 +87,14 @@ void ParamControl::load(const qs::Program& p) {
         knob.setRange(double(def.offset), double(def.offset + lim), 1.0);
         knob.setValue(double(raw + def.offset), juce::dontSendNotification);
     } else if (kind == Kind::Combo) {
-        if (combo.getNumItems() != lim + 1) {
+        // Rebuild the list when its size or its names change (sample names follow the selected group).
+        juce::StringArray items;
+        for (int r = 0; r <= lim; ++r) items.add(label(r));
+        bool same = combo.getNumItems() == items.size();
+        for (int i = 0; same && i < items.size(); ++i) same = combo.getItemText(i) == items[i];
+        if (!same) {
             combo.clear(juce::dontSendNotification);
-            for (int r = 0; r <= lim; ++r) combo.addItem(valueLabel(def, r), r + 1);
+            for (int r = 0; r <= lim; ++r) combo.addItem(items[r], r + 1);
         }
         combo.setSelectedId(raw + 1, juce::dontSendNotification);
     } else {
@@ -129,6 +134,7 @@ SoundPanel::SoundPanel(EditorTab& e, int s) : editor(e), sound(s) {
 ParamControl* SoundPanel::add(const qs::ParamDef& d, juce::String caption, int drumIdx) {
     auto* c = controls.add(new ParamControl(d, sound, drumIdx,
                                             [this](int s, const qs::ParamDef& def, int dr, int v) { editor.paramChanged(s, def, dr, v); }, caption));
+    editor.attachLabels(*c);
     addAndMakeVisible(c);
     return c;
 }
@@ -288,8 +294,35 @@ void EditorTab::updateLcd() {
     int on = 0;
     for (int i = 0; i < qs::kSoundCount; ++i) on += prog.isEnabled(i);
     lcd.setLines(juce::String(prog.name()).trimEnd(),
-                 {where.toUpperCase(), "SOUNDS ON: " + juce::String(on) + " OF 4" +
+                 {where.toUpperCase(), "SOUNDS ON: " + juce::String(on) + " OF 4   " + juce::String(qs::romSetName(session.romSet())) + " SAMPLES" +
                                            (awaitingDump ? juce::String("   WAITING FOR QS...") : juce::String())});
+}
+
+void EditorTab::attachLabels(ParamControl& c) {
+    const bool isGroup = nameHas(c.def.name, "sample group"), isNumber = nameHas(c.def.name, "sample number");
+    if (!isGroup && !isNumber) return;
+    const int sound = c.sound, drum = c.drum;
+    const auto* def = &c.def;
+    c.labelFn = [this, sound, drum, def, isGroup](int raw) -> juce::String {
+        const bool drumSound = prog.isDrum(sound);
+        const auto rs = session.romSet();
+        if (isGroup) {
+            if (!drumSound) return ParamControl::valueLabel(*def, raw);
+            const juce::String n = qs::drumGroupName(rs, raw);
+            return juce::String(raw) + (n.isNotEmpty() ? " " + n : juce::String());
+        }
+        // sample number: look up the name in the current group
+        const qs::ParamDef* g = nullptr;
+        if (drumSound) {
+            for (int i = 0; i < qs::drumParamCount(); ++i)
+                if (juce::String(qs::drumParam(i).name) == "Sample group") g = &qs::drumParam(i);
+        } else {
+            g = &qs::keyboardParam(qs::findKeyboardParam("Sample group"));
+        }
+        const int group = g ? prog.raw(sound, *g, drumSound ? drum : 0) : 0;
+        const juce::String name = qs::sampleName(rs, drumSound, group, raw);
+        return juce::String(raw).paddedLeft('0', 2) + (name.isNotEmpty() ? "  " + name : juce::String());
+    };
 }
 
 void EditorTab::paramChanged(int sound, const qs::ParamDef& d, int drum, int value) {
@@ -462,7 +495,11 @@ void EditorTab::showDetail(int sound, const juce::String& section, int drum) {
         for (int dr = 0; dr < qs::kDrumsPerSound; ++dr) {
             startGroup("Drum " + juce::String(dr + 1));
             for (int i = 0; i < qs::drumParamCount(); ++i)
-                detailContent.addAndMakeVisible(detailControls.add(new ParamControl(qs::drumParam(i), sound, dr, change)));
+            {
+                auto* c = detailControls.add(new ParamControl(qs::drumParam(i), sound, dr, change));
+                attachLabels(*c);
+                detailContent.addAndMakeVisible(c);
+            }
         }
     } else {
         static const char* prefixes[] = {"", "", "", "", "", "", "", "", "", "Pitch lfo", "Filter lfo", "Amp lfo",
@@ -474,7 +511,11 @@ void EditorTab::showDetail(int sound, const juce::String& section, int drum) {
                     for (int i = 0; i < qs::keyboardParamCount(); ++i) {
                         const auto& d = qs::keyboardParam(i);
                         if (d.func == f && !nameHas(d.name, "drum mode"))
-                            detailContent.addAndMakeVisible(detailControls.add(new ParamControl(d, sound, 0, change, shortCaption(d.name, prefixes[f]))));
+                        {
+                            auto* c = detailControls.add(new ParamControl(d, sound, 0, change, shortCaption(d.name, prefixes[f])));
+                            attachLabels(*c);
+                            detailContent.addAndMakeVisible(c);
+                        }
                     }
                 }
     }

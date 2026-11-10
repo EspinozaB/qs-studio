@@ -22,6 +22,12 @@ Or **Import a folder of .syx banks** and choose which file fills which bank (the
 [Alesis Archive Project](https://github.com/jzemeocala/Alesis-Archive-Project/tree/HEAD/BANKS/FACTORY) are matched automatically).
 Imports only change QS Studio's list; to write a bank to the synth use the SysEx Librarian. No Alesis data ships with QS Studio.
 
+**QS6 and QS7/QS8/QSR banks:** the QS6 has its own sample ROM; the QS7, QS8 and QSR share another. A program stores only a sample
+group and number, so a QS6 program can play a different sample on a QSR. Library > **Convert a bank file QS6 <-> QSR** rewrites each
+program to the same-named sample on the other model (exact, or a close name such as GrandPiano -> GrndPianoL) and writes a report of
+every change and every sample with no match. Sample tables come from the sample charts in the Alesis reference manuals
+(`tools/gen_samples.py`); the QS7/QS8 chart was checked against a QSR's ROM directory. The QS6 chart is unverified until a QS6 ROM is read.
+
 **Play from your own MIDI keyboard:** pick it under **Controller in**; everything you play goes to the QS on the chosen channel.
 
 **QS settings needed:** Global I/O set to MIDI, and Global > MIDI Program Select ON (needed to select and read Preset, GenMIDI and card banks).

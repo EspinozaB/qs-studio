@@ -7,6 +7,7 @@
 
 #include "../core/qs_card.h"
 #include "../core/qs_program.h"
+#include "../core/qs_samples.h"
 #include "../core/qs_sysex.h"
 
 static qs::Bytes readFile(const char* p) {
@@ -66,6 +67,26 @@ int main(int argc, char** argv) {
     }
     CHECK(std::string(qs::sampleGroupName(0)) == "Piano" && std::string(qs::sampleGroupName(24)) == "Rhythm");
 
+    // sample tables and the QS6 <-> QS7/8/R converter
+    CHECK(qs::sampleName(qs::RomSet::QS78, false, 0, 1) == "GrndPianoL");
+    CHECK(qs::sampleName(qs::RomSet::QS78, false, 10, 2) == "Spectral");
+    CHECK(qs::sampleName(qs::RomSet::QS6, false, 10, 2) == "Spectral 1");
+    CHECK(qs::sampleName(qs::RomSet::QS78, true, 13, 1) == "Psi Beat 1");
+    CHECK(qs::sampleCount(qs::RomSet::QS78, false, 24) == 90);
+    {
+        qs::Program p;
+        const auto& en = qs::keyboardParam(qs::findKeyboardParam("Enable"));
+        const auto& g = qs::keyboardParam(qs::findKeyboardParam("Sample group"));
+        const auto& n = qs::keyboardParam(qs::findKeyboardParam("Sample number"));
+        p.setRaw(0, en, 1); p.setRaw(0, g, 10); p.setRaw(0, n, 2);   // QS6 Noise #2 Spectral 1
+        p.setRaw(1, en, 1); p.setRaw(1, g, 3);  p.setRaw(1, n, 1);   // Guitar #1 SteelStrng, same on both
+        p.setRaw(2, en, 1); p.setRaw(2, g, 24); p.setRaw(2, n, 1);   // QS6 Rhythm #1 SynDrumLp1, not on the QSR
+        auto c = qs::convertProgram(p, qs::RomSet::QS6, qs::RomSet::QS78);
+        CHECK(c.program.raw(0, g) == 10 && c.program.raw(0, n) == 2);  // -> QSR Noise #2 "Spectral"
+        CHECK(c.notes.size() == 3 && c.notes[1].kind == qs::ConvertNote::Same && c.notes[2].kind == qs::ConvertNote::Unmatched);
+        CHECK(c.program.raw(2, g) == 24 && c.program.raw(2, n) == 1);  // unmatched left as is
+    }
+
     for (int a = 1; a < argc; ++a) {
         auto raw = readFile(argv[a]);
         std::string s(argv[a]);
@@ -85,6 +106,13 @@ int main(int argc, char** argv) {
                                 gs->controller[2], gs->controller[3], gs->programSelect);
                     CHECK(gs->controller[2] == 91 && gs->programSelect == 1);
                 }
+            {
+                auto toQs6 = qs::convertBank(msgs, qs::RomSet::QS78, qs::RomSet::QS6);
+                int changed = 0, missing = 0;
+                for (auto& [num, c] : toQs6.programs) { changed += c.changed(); missing += c.unmatched(); }
+                std::printf("    QS7/8/R -> QS6: %d sample refs renumbered, %d with no QS6 match\n", changed, missing);
+                CHECK(toQs6.messages.size() == msgs.size());
+            }
             auto sum = qs::summarize(msgs);
             std::cout << s << ": programs=" << sum.programs << " mixes=" << sum.mixes << " effects=" << sum.effects
                       << " globals=" << sum.globals << " first='" << (sum.programNames.empty() ? "" : sum.programNames[0].second)

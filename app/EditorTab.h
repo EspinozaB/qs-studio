@@ -20,6 +20,9 @@ public:
     const int sound, drum;
 
     static juce::String valueLabel(const qs::ParamDef& d, int raw);
+    // Optional: names that depend on the program or the model (sample names, drum group names).
+    std::function<juce::String(int raw)> labelFn;
+    juce::String label(int raw) const { return labelFn ? labelFn(raw) : valueLabel(def, raw); }
 
 private:
     enum class Kind { Knob, Combo, Toggle } kind;
@@ -69,6 +72,7 @@ public:
     void paramChanged(int sound, const qs::ParamDef& d, int drum, int value);
     void setEnabled(int sound, bool on);
     const qs::Program& program() const { return prog; }
+    void attachLabels(ParamControl& c);  // sample and drum-group names for the connected model
 
 private:
     void sysexReceived(const qs::Bytes& msg) override;

@@ -36,7 +36,9 @@ private:
     void sendCachedToEditBuffer();
     void storeToUser();
     void copyBankToCard();
-    void finishCardCopy(int sourceBank, int cardBank, juce::File backup);
+    void startCardCopy(std::vector<qs::Bytes> msgs, std::array<std::optional<qs::Program>, 128> expected, juce::String label, int cardBank);
+    void finishCardCopy(std::array<std::optional<qs::Program>, 128> expected, juce::String label, int cardBank, juce::File backup);
+    void convertBankFile();
     void step(int delta);
 
     Session& session;
@@ -52,7 +54,8 @@ private:
     juce::ListBox list{"programs", this};
     juce::TextButton prevBtn{"<"}, nextBtn{">"}, readBtn{"Read this bank from QS"}, readAllBtn{"Read all banks from QS"},
         importFolderBtn{"Import a folder of .syx banks..."}, importOneBtn{"Import a .syx into this bank..."}, editBtn{"Open in editor"},
-        sendBtn{"Audition (send to QS, don't store)"}, storeBtn{"Store to User..."}, copyToCardBtn{"Copy a bank onto this card bank..."};
+        sendBtn{"Audition (send to QS, don't store)"}, storeBtn{"Store to User..."}, copyToCardBtn{"Copy a bank onto this card bank..."},
+        convertBtn{"Convert a bank file QS6 <-> QSR..."};
     juce::HyperlinkButton factoryLink{"Get the Alesis factory banks (.syx)",
                                       juce::URL("https://github.com/jzemeocala/Alesis-Archive-Project/tree/HEAD/BANKS/FACTORY")};
     juce::Label sourceLabel;

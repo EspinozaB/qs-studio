@@ -591,6 +591,7 @@ MainComponent::~MainComponent() {
 void MainComponent::sysexReceived(const qs::Bytes& msg) {
     if (auto d = qs::parseDeviceReply(msg)) {
         session.deviceName = juce::String(d->model) + " v" + juce::String(d->version);
+        settings().setValue("lastModel", juce::String(d->model));
         statusLabel.setText("Connected to " + session.deviceName, juce::dontSendNotification);
         // Factory names for empty Preset/GenMIDI banks, if the user pointed us at the factory files before.
         session.programModeSent = false;
