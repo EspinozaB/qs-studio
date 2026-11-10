@@ -213,7 +213,23 @@ LibraryTab::LibraryTab(Session& s) : session(s) {
     act.edit = [this] { openInEditor(selectedProgram()); };
     act.store = [this] { storeToUser(); };
     act.currentProgram = [this] { return selectedProgram(); };
-    panel = std::make_unique<FrontPanel>(lcd, act);
+    act.stepChannel = [this](int d) {
+        session.setChannel(juce::jlimit(1, 16, session.channel + d));
+        if (session.channelChanged) session.channelChanged();
+        updateLcd();
+    };
+    act.setMode = [this](bool mix) {
+        session.programModeSent = false;  // the next program select puts the QS back in Program mode
+        if (mix) {
+            if (session.midi.isOpen()) session.midi.send(qs::modeSelect(1));
+        } else if (session.midi.isOpen()) {
+            session.selectProgram(bank, selectedProgram());
+        }
+        updateLcd();
+    };
+    act.showCards = [this] { showBank(kFirstCardBank + cardBankBox.getSelectedItemIndex()); };
+    act.refreshDisplay = [this] { updateLcd(); };
+    panel = std::make_unique<FrontPanel>(lcd, session.volume, act);
     addAndMakeVisible(*panel);
     const char* mainBanks[] = {"User", "Preset 1", "Preset 2", "Preset 3", "GenMIDI", "Card"};
     for (int b = 0; b < 6; ++b) {
@@ -348,9 +364,17 @@ void LibraryTab::selectProgram(int prog) {
 void LibraryTab::updateLcd() {
     if (panel) panel->sync();
     const auto name = session.library.nameOf(session.currentBank, session.currentProgram);
+    // On the QSR the VALUE knob edits whichever field the cursor is on; mark it with > like a cursor.
+    const auto target = panel ? panel->knobTarget() : FrontPanel::Target::Program;
+    auto field = [&](FrontPanel::Target t, const juce::String& s) { return (target == t && !panel->isQs6() ? ">" : "") + s; };
+    if (panel && panel->inMixMode()) {
+        lcd.setLines("MIX MODE", {"Mixes aren't listed in QS Studio yet.", "Press PROGRAM to go back."});
+        return;
+    }
     lcd.setLines(name.isNotEmpty() ? name : juce::String("Program ") + juce::String(session.currentProgram).paddedLeft('0', 3),
-                 {"BANK: " + bankTitle(session.currentBank).toUpperCase() + "   PROG " + juce::String(session.currentProgram).paddedLeft('0', 3) +
-                      "   CH " + juce::String(session.channel).paddedLeft('0', 2),
+                 {field(FrontPanel::Target::Bank, "BANK: " + bankTitle(session.currentBank).toUpperCase()) + "  " +
+                      field(FrontPanel::Target::Program, "PROG " + juce::String(session.currentProgram).paddedLeft('0', 3)) + "  " +
+                      field(FrontPanel::Target::Channel, "CH " + juce::String(session.channel).paddedLeft('0', 2)),
                   session.midi.isOpen() ? (session.deviceName.isNotEmpty() ? session.deviceName : juce::String("MIDI connected"))
                                         : juce::String("NOT CONNECTED: see Connection")});
 }
@@ -386,7 +410,7 @@ void LibraryTab::paintListBoxItem(int row, juce::Graphics& g, int w, int h, bool
 void LibraryTab::selectedRowsChanged(int row) {
     if (suppressSend || row < 0 || row >= int(rows.size())) return;
     pendingSelect = rows[size_t(row)];
-    if (panel) panel->sync();
+    if (panel) panel->leaveMixMode();
     startTimer(90);  // debounce while arrowing through the list
 }
 
@@ -763,13 +787,13 @@ void LibraryTab::convertBankFile() {
 void LibraryTab::paint(juce::Graphics& g) {
     g.fillAll(theme::bg);
     auto r = getLocalBounds().reduced(14);
-    r.removeFromTop(panel->preferredHeight() + 6);
+    r.removeFromTop(panel->getHeight() + 6);
     theme::drawCaption(g, r.removeFromTop(18).removeFromLeft(140), "Bank", juce::Justification::centredLeft);
 }
 
 void LibraryTab::resized() {
     auto r = getLocalBounds().reduced(14);
-    panel->setBounds(r.removeFromTop(panel->preferredHeight()));
+    panel->setBounds(r.removeFromTop(panel->heightForWidth(r.getWidth())));
     r.removeFromTop(26);
     auto left = r.removeFromLeft(150);
     for (auto* b : bankButtons) {

@@ -137,9 +137,12 @@ struct Session : private juce::MidiKeyboardState::Listener, private juce::MidiIn
         const auto model = (deviceName.isNotEmpty() ? deviceName : settings().getValue("lastModel", "QSR")).upToFirstOccurrenceOf(" ", false, false);
         return qs::romSetForModel(model.toStdString());
     }
-    // The original QS6 has one assignable slider (Controller A); the other models have four (A-D).
-    // The QS6 has only the Controller A slider. Uses the connected model, or the last one connected.
+    // The original QS6 has one assignable slider (Controller A); the QS6.1 and later have four (A-D).
+    // Follows the Panel look when it's set to a model, otherwise the connected (or last connected) synth.
     bool hasOneControllerSlider() const {
+        const int look = settings().getIntValue("panelLook", 1);
+        if (look == 2) return true;
+        if (look == 3) return false;
         const auto model = deviceName.isNotEmpty() ? deviceName : settings().getValue("lastModel", "QSR");
         return model.upToFirstOccurrenceOf(" ", false, false) == "QS6";
     }
@@ -148,7 +151,9 @@ struct Session : private juce::MidiKeyboardState::Listener, private juce::MidiIn
     std::function<void(const qs::Program&, const juce::String& where)> openInEditor;
     std::function<void(const juce::String&)> setStatus;
     std::function<void(int bank, int program)> currentProgramChanged;
+    std::function<void()> channelChanged;  // the MIDI channel was changed somewhere other than the top bar
     int currentBank = 0, currentProgram = 0;
+    juce::Value volume{juce::var(127)};  // Volume slider/knob (sent as CC7); shared by the strip and the QSR panel
 
     void setChannel(int ch) {
         channel = juce::jlimit(1, 16, ch);

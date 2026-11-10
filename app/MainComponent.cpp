@@ -284,6 +284,7 @@ void CardTab::resized() {
 
 // ---------- Main window ----------
 namespace {
+constexpr int kStripH = 176;  // bottom strip: wheels, faders and keyboard
 bool looksLikeQs6(const juce::String& model) { return model.startsWith("QS6") || model.startsWithIgnoreCase("QuadraSynth"); }
 }  // namespace
 
@@ -314,6 +315,9 @@ MainComponent::MainComponent() {
          "PCMCIA card.\n"
          "2. Click a program: the QS switches to it, so you can play it from the keyboard below or your own controller. "
          "Up/Down arrow keys step through programs.\n"
+         "The front panel works like the synth's. QS6: a group key (00-120) picks the tens and 0-9 the ones, VALUE steps "
+         "programs, BANK steps banks, PAGE changes the MIDI channel. QSR: turn VALUE (drag or mouse wheel); CURSOR moves it "
+         "to the bank, MIDI CH to the channel. Hover any key to see what it does on the hardware.\n"
          "3. Names come from the QS (Read this bank) or from .syx files you import. The line under the list says where they came from.\n"
          "4. Audition sends a program into the QS's edit buffer to try it without storing. Store to User writes it to a User slot.",
          "Browse banks and play programs", library},
@@ -374,6 +378,7 @@ MainComponent::MainComponent() {
         showPage(1);
     };
     session.setStatus = [this](const juce::String& s) { statusLabel.setText(s, juce::dontSendNotification); };
+    session.channelChanged = [this] { channelBox.setSelectedId(session.channel, juce::dontSendNotification); };
     session.midi.addListener(this);
 
     // ---- top bar
@@ -489,6 +494,7 @@ MainComponent::~MainComponent() {
     session.midi.removeListener(this);
     session.openInEditor = nullptr;
     session.setStatus = nullptr;
+    session.channelChanged = nullptr;
     for (auto& p : pages) removeChildComponent(p.comp);
 }
 
@@ -510,6 +516,11 @@ void MainComponent::applyLook() {
     theme::applyStyle(qs6 ? theme::Style::QS6 : theme::Style::QSR);
     if (auto* lf = dynamic_cast<theme::LookAndFeel*>(&juce::LookAndFeel::getDefaultLookAndFeel())) lf->refresh();
     sendLookAndFeelChange();
+    // The QS6 has 61 keys (C to C); the rack and the QS7/QS8 views get the full 88.
+    if (qs6) keyboard.setAvailableRange(36, 96);
+    else keyboard.setAvailableRange(21, 108);
+    perf.updateLayout();
+    resized();
     if (library) {
         library->refresh();
         library->resized();
@@ -559,7 +570,7 @@ void MainComponent::paint(juce::Graphics& g) {
     g.fillRect(getLocalBounds().removeFromTop(56));
     g.setColour(theme::accent);
     g.fillRect(0, 54, getWidth(), 2);
-    const int stripH = keysBtn.getToggleState() ? 44 : 158;
+    const int stripH = keysBtn.getToggleState() ? 44 : kStripH;
     g.setColour(theme::panel);
     g.fillRect(getLocalBounds().removeFromBottom(stripH));
     g.setColour(theme::line);
@@ -582,7 +593,7 @@ void MainComponent::resized() {
     lookLabel.setBounds(top.removeFromRight(90));
 
     const bool hidden = keysBtn.getToggleState();
-    auto strip = r.removeFromBottom(hidden ? 44 : 158).reduced(12, 7);
+    auto strip = r.removeFromBottom(hidden ? 44 : kStripH).reduced(12, 7);
     auto bar = strip.removeFromTop(30);
     keysBtn.setBounds(bar.removeFromLeft(130));
     bar.removeFromLeft(12);
@@ -599,7 +610,13 @@ void MainComponent::resized() {
         perf.setBounds(strip.removeFromLeft(perf.preferredWidth()));
         strip.removeFromLeft(8);
         keyboard.setBounds(strip);
-        keyboard.setKeyWidth(juce::jmax(14.0f, float(strip.getWidth() - 44) / 52.0f));
+        // Fill the width with the model's key range.
+        int whites = 0;
+        for (int n = keyboard.getRangeStart(); n <= keyboard.getRangeEnd(); ++n)
+            if (!juce::MidiMessage::isMidiNoteBlack(n)) ++whites;
+        keyboard.setScrollButtonsVisible(false);
+        keyboard.setKeyWidth(juce::jmax(12.0f, float(strip.getWidth()) / float(juce::jmax(1, whites))));
+        keyboard.setLowestVisibleKey(keyboard.getRangeStart());
     }
 
     sidebar.setBounds(r.removeFromLeft(230));

@@ -183,7 +183,7 @@ public:
         if (!smallLines.isEmpty()) {
             const float lh = t.getHeight() / float(smallLines.size());
             g.setFont(monoFont(juce::jmin(15.0f, lh * 0.85f)));
-            for (auto& s : smallLines) g.drawText(s, t.removeFromTop(lh), juce::Justification::centredLeft, true);
+            for (auto& s : smallLines) g.drawFittedText(s, t.removeFromTop(lh).toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
         }
     }
 

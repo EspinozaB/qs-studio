@@ -6,9 +6,17 @@ settings are saved next to the exe (`QSStudio.settings`).
 ## What it does
 
 The window works like a hardware editor: pages in a sidebar grouped by job, a plain-language summary at the top of each page and a
-**How this works** button with step-by-step help. The look follows the synth: a QS6 gets a green LCD and the QS6 front panel
-(PROGRAM / EDIT SELECT / STORE, BANK and VALUE arrows, the 13 group buttons and 0-9); a QS7, QS8 or QSR gets the grey-blue LCD and the
-rack panel (PROG / EDIT / STORE, bank DOWN/UP, VALUE knob). Change it under **Panel look**.
+**How this works** button with step-by-step help. The look follows the synth, and the panels are drawn to match the hardware:
+
+- **QS6:** the keyboard's panel left to right: EDIT MODE (VALUE up/down, EDIT SELECT, STORE, PAGE / PROGRAM CHANNEL SELECT),
+  the green LCD, PLAY MODE (MIX, PROGRAM, BANK), the 13 group keys and 0-9 with the Direct Select labels printed above and below them
+  (Mix, Effects, Program; Keyboard Sound, Drum Sound, Mix, from the QS6 manual). The strip below has the pitch and mod wheels, VOLUME
+  and CONTROLLER A (EDIT VALUE), and a 61-key keyboard.
+- **QSR:** the 1U rack face: PHONES and VOLUME, the LCD, the VALUE knob, CURSOR / EDIT / MIDI CH / STORE, MIX / PROG / bank DOWN / UP,
+  the two card slots and POWER. CURSOR and MIDI CH move what the VALUE knob changes, like on the unit. The strip has wheels, VOLUME and
+  Controllers A-D.
+
+Change it under **Panel look**.
 
 | Page | What it does |
 |---|---|
