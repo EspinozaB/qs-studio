@@ -35,6 +35,8 @@ private:
     void openInEditor(int prog);
     void sendCachedToEditBuffer();
     void storeToUser();
+    void copyBankToCard();
+    void finishCardCopy(int sourceBank, int cardBank, juce::File backup);
     void step(int delta);
 
     Session& session;
@@ -50,7 +52,7 @@ private:
     juce::ListBox list{"programs", this};
     juce::TextButton prevBtn{"<"}, nextBtn{">"}, readBtn{"Read this bank from QS"}, readAllBtn{"Read all banks from QS"},
         importFolderBtn{"Import a folder of .syx banks..."}, importOneBtn{"Import a .syx into this bank..."}, editBtn{"Open in editor"},
-        sendBtn{"Audition (send to QS, don't store)"}, storeBtn{"Store to User..."};
+        sendBtn{"Audition (send to QS, don't store)"}, storeBtn{"Store to User..."}, copyToCardBtn{"Copy a bank onto this card bank..."};
     juce::HyperlinkButton factoryLink{"Get the Alesis factory banks (.syx)",
                                       juce::URL("https://github.com/jzemeocala/Alesis-Archive-Project/tree/HEAD/BANKS/FACTORY")};
     juce::Label sourceLabel;

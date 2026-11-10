@@ -112,6 +112,92 @@ private:
     std::function<void(juce::String)> onDone;
 };
 
+// Sends a list of SysEx messages, paced so the QS keeps up.
+void sendPaced(Session& s, const std::vector<qs::Bytes>& msgs, juce::ThreadWithProgressWindow* t) {
+    for (size_t i = 0; i < msgs.size() && !t->threadShouldExit(); ++i) {
+        s.midi.send(msgs[i]);
+        t->setProgress(double(i + 1) / double(msgs.size()));
+        juce::Thread::sleep(int(MidiLink::wireSeconds(msgs[i].size()) * 1000) + 20);
+    }
+}
+
+// Step 1 of "copy a bank to the card": back up the User bank (Send All), then load the chosen bank into User.
+class CardCopyPrepJob : public juce::ThreadWithProgressWindow {
+public:
+    CardCopyPrepJob(Session& s, int src, juce::File backupFile, std::function<void(bool, juce::String)> done)
+        : ThreadWithProgressWindow("Copy to card: preparing the QS", true, true), session(s), source(src), backup(backupFile),
+          onDone(std::move(done)) {}
+
+    void run() override {
+        auto& midi = session.midi;
+        setStatusMessage("Backing up your User bank (Send All)...");
+        midi.clearQueue();
+        midi.send({0xF0, 0x00, 0x00, 0x0E, 0x0E, qs::AllDumpRequest, 0xF7});
+        qs::Bytes all;
+        int count = 0;
+        while (!threadShouldExit()) {
+            auto m = midi.waitFor([](const qs::Bytes& x) { return qs::opcodeOf(x) >= 0; }, count == 0 ? 5000 : 2500, this);
+            if (!m) break;
+            all.insert(all.end(), m->begin(), m->end());
+            ++count;
+            setProgress(juce::jmin(0.99, count / 357.0));
+        }
+        if (count < 357) {
+            message = "The User bank backup was incomplete (" + juce::String(count) + " of 357 parts), so nothing was changed. "
+                      "Check the MIDI connection and try again.";
+            return;
+        }
+        backup.getParentDirectory().createDirectory();
+        backup.replaceWithData(all.data(), all.size());
+
+        setStatusMessage("Loading " + bankTitle(source) + " into the User bank...");
+        std::vector<qs::Bytes> msgs;
+        for (int p = 0; p < 128; ++p)
+            if (auto& prog = session.library.programs[size_t(source)][size_t(p)]) msgs.push_back(prog->userDump(p));
+        sendPaced(session, msgs, this);
+        ok = !threadShouldExit();
+        message = ok ? "Your User bank is backed up to " + backup.getFileName() + " and now holds " + bankTitle(source) + "."
+                     : "Cancelled. Your backup is in " + backup.getFullPathName() + " (send it with the SysEx Librarian to restore).";
+    }
+
+    void threadComplete(bool) override {
+        if (onDone) onDone(ok, message);
+        delete this;
+    }
+
+private:
+    Session& session;
+    int source;
+    juce::File backup;
+    bool ok = false;
+    juce::String message;
+    std::function<void(bool, juce::String)> onDone;
+};
+
+// Restores a saved .syx (the User bank backup) to the QS.
+class RestoreJob : public juce::ThreadWithProgressWindow {
+public:
+    RestoreJob(Session& s, juce::File f, std::function<void(juce::String)> done)
+        : ThreadWithProgressWindow("Restoring your User bank", true, false), session(s), file(f), onDone(std::move(done)) {}
+    void run() override {
+        juce::MemoryBlock mb;
+        if (!file.loadFileAsData(mb)) { message = "Couldn't read " + file.getFullPathName(); return; }
+        auto ptr = static_cast<const uint8_t*>(mb.getData());
+        sendPaced(session, qs::splitSysex(qs::Bytes(ptr, ptr + mb.getSize())), this);
+        message = "Your User bank has been restored from " + file.getFileName() + ".";
+    }
+    void threadComplete(bool) override {
+        if (onDone) onDone(message);
+        delete this;
+    }
+
+private:
+    Session& session;
+    juce::File file;
+    juce::String message;
+    std::function<void(juce::String)> onDone;
+};
+
 }  // namespace
 
 LibraryTab::LibraryTab(Session& s) : session(s) {
@@ -144,6 +230,10 @@ LibraryTab::LibraryTab(Session& s) : session(s) {
     for (juce::Component* c : std::initializer_list<juce::Component*>{&prevBtn, &nextBtn, &readBtn, &readAllBtn, &importFolderBtn, &importOneBtn,
                                                                     &editBtn, &sendBtn, &storeBtn, &factoryLink, &sourceLabel})
         addAndMakeVisible(c);
+    addChildComponent(copyToCardBtn);
+    copyToCardBtn.onClick = [this] { copyBankToCard(); };
+    copyToCardBtn.setTooltip("Puts a whole bank (for example your QS6 User bank) onto this card bank. QS Studio backs up your User bank, "
+                             "loads the bank you pick, tells you which buttons to press on the QS, checks the card, then restores your User bank.");
     prevBtn.onClick = [this] { step(-1); };
     nextBtn.onClick = [this] { step(1); };
     readBtn.onClick = [this] { readBanks({bank}); };
@@ -186,6 +276,7 @@ void LibraryTab::showBank(int b) {
     for (int i = 0; i < bankButtons.size(); ++i)
         bankButtons[i]->setToggleState(i < 5 ? i == b : b >= kFirstCardBank, juce::dontSendNotification);
     readBtn.setButtonText("Read " + bankTitle(b) + " from QS");
+    copyToCardBtn.setVisible(b >= kFirstCardBank);
     rebuildRows();
     updateLcd();
 }
@@ -469,6 +560,80 @@ void LibraryTab::storeToUser() {
     }), true);
 }
 
+void LibraryTab::copyBankToCard() {
+    if (!session.midi.isOpen()) {
+        alert("Not connected", "Connect to the QS on the Device tab first.");
+        return;
+    }
+    const int cardBank = bank;
+    juce::StringArray choices;
+    juce::Array<int> ids;
+    for (int b = 0; b < int(kBanks.size()); ++b)
+        if (b != cardBank && session.library.countRead(b) == 128) {
+            choices.add(bankTitle(b) + "  (" + (session.library.source[size_t(b)].isNotEmpty() ? session.library.source[size_t(b)] : juce::String("known")) + ")");
+            ids.add(b);
+        }
+    if (ids.isEmpty()) {
+        alert("Nothing to copy", "First fill a bank with all 128 programs: read it from a QS, or import a .syx into it.");
+        return;
+    }
+    auto* w = new juce::AlertWindow("Copy a bank onto " + bankTitle(cardBank),
+                                    "Which bank should go onto the card?\n\n"
+                                    "QS Studio backs up your User bank first and restores it at the end. "
+                                    "Card bank numbers count across both slots: with one card in slot A, Card 1 is CrdA Bnk1.",
+                                    juce::MessageBoxIconType::QuestionIcon);
+    w->addComboBox("src", choices, "Bank to copy");
+    w->addButton("Start", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    w->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    w->enterModalState(true, juce::ModalCallbackFunction::create([this, w, ids, cardBank](int r) {
+        if (r != 1) return;
+        const int src = ids[w->getComboBoxComponent("src")->getSelectedItemIndex()];
+        const auto backup = settingsDir().getChildFile("Backups").getChildFile(
+            "User_before_card_copy_" + juce::Time::getCurrentTime().formatted("%Y%m%d_%H%M%S") + ".syx");
+        (new CardCopyPrepJob(session, src, backup, [this, src, cardBank, backup](bool ok, juce::String msg) {
+            if (!ok) {
+                alert("Copy to card", msg);
+                return;
+            }
+            const int n = cardBank - kFirstCardBank + 1;
+            auto* step = new juce::AlertWindow("Now on the QS",
+                                               msg + "\n\nOn the QS:\n"
+                                               "1. Press STORE.\n"
+                                               "2. Page right until the display shows  Save USER to CrdA Bnk" + juce::String(n) + "\n"
+                                               "   (use the value buttons to change the bank number if needed).\n"
+                                               "3. Press STORE again and wait for it to finish.\n\n"
+                                               "Then click Done. QS Studio will read the card bank back to check it and restore your User bank.",
+                                               juce::MessageBoxIconType::InfoIcon);
+            step->addButton("Done", 1, juce::KeyPress(juce::KeyPress::returnKey));
+            step->addButton("Cancel and restore my User bank", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+            step->enterModalState(true, juce::ModalCallbackFunction::create([this, src, cardBank, backup](int r2) {
+                if (r2 == 1) finishCardCopy(src, cardBank, backup);
+                else
+                    (new RestoreJob(session, backup, [this](juce::String m) { alert("Copy to card", "Cancelled. " + m); }))->launchThread();
+            }), true);
+        }))->launchThread();
+    }), true);
+}
+
+void LibraryTab::finishCardCopy(int src, int cardBank, juce::File backup) {
+    (new ReadBanksJob(session, {cardBank}, [this, src, cardBank, backup](juce::String) {
+        int same = 0, known = 0;
+        for (int p = 0; p < 128; ++p) {
+            auto& a = session.library.programs[size_t(src)][size_t(p)];
+            auto& b = session.library.programs[size_t(cardBank)][size_t(p)];
+            if (a && b) {
+                ++known;
+                same += a->bytes() == b->bytes();
+            }
+        }
+        showBank(cardBank);
+        const auto verdict = same == 128 ? juce::String("Checked: all 128 programs on ") + bankTitle(cardBank) + " match " + bankTitle(src) + "."
+                                         : "Check: " + juce::String(same) + " of 128 programs match (" + juce::String(known) + " read back). "
+                                           "If that's low, the Save USER to card step may not have run.";
+        (new RestoreJob(session, backup, [this, verdict](juce::String m) { alert("Copy to card", verdict + "\n\n" + m); }))->launchThread();
+    }))->launchThread();
+}
+
 void LibraryTab::paint(juce::Graphics& g) {
     g.fillAll(theme::bg);
     auto r = getLocalBounds().reduced(14);
@@ -506,7 +671,7 @@ void LibraryTab::resized() {
     }
     factoryLink.setBounds(right.removeFromTop(22));
     right.removeFromTop(16);
-    for (auto* b : {&editBtn, &sendBtn, &storeBtn}) {
+    for (auto* b : {&editBtn, &sendBtn, &storeBtn, &copyToCardBtn}) {
         b->setBounds(right.removeFromTop(34));
         right.removeFromTop(6);
     }
