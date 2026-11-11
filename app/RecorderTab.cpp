@@ -123,9 +123,7 @@ private:
 
 // ---------------- RecorderTab ----------------
 
-RecorderTab::RecorderTab(Session& s) : session(s) {
-    std::unique_ptr<juce::XmlElement> state(juce::parseXML(settings().getValue("audioState")));
-    devices.initialise(2, 2, state.get(), true);
+RecorderTab::RecorderTab(Session& s) : session(s), devices(s.audio()) {
     devices.addAudioCallback(&recorder);
     selector = std::make_unique<juce::AudioDeviceSelectorComponent>(devices, 1, 2, 0, 2, false, false, true, false);
     addAndMakeVisible(audioSec);

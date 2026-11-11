@@ -5,6 +5,7 @@
 #include "EffectsTab.h"
 #include "LibraryTab.h"
 #include "MixTab.h"
+#include "PlayerTab.h"
 #include "RecorderTab.h"
 
 // ---------- helpers ----------
@@ -335,6 +336,8 @@ MainComponent::MainComponent() {
     library = new LibraryTab(session);
     editor = new EditorTab(session);
     mixEditor = new MixTab(session);
+    player = new PlayerTab(session);
+    own(player);
     fxEditor = new EffectsTab(session);
     own(mixEditor);
     own(fxEditor);
@@ -359,6 +362,12 @@ MainComponent::MainComponent() {
          "- Programs / Mixes switches the list.\n"
          "- Read from the synth (right) gets your own names; the factory ones are already there.",
          "Browse banks and play programs", library},
+        {"Play", "Sound Player",
+         "Play the samples of a QCard image or a QS sample ROM dump from this computer, like a simple sampler.",
+         "- Open a card image (.img/.bin) or the ROM dump from Cards & ROM.\n"
+         "- Pick a voice and play it from the keyboard below, your controller or the computer keys.\n"
+         "- Audio output... picks where it plays. It's the raw samples, not the full QS synth engine yet.",
+         "Play card and ROM samples", player},
         {"Edit", "Program Editor",
          "Change the program the synth is playing. You hear every change straight away.",
          "- Open a program from the Programs page, or click Get from QS.\n"

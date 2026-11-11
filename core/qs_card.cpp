@@ -59,9 +59,8 @@ static bool printable(const uint8_t* p, size_t n) {
     return true;
 }
 
-static void parseVoices(CardImage& c) {
+static void parseVoices(CardImage& c, size_t o = kFirstVoice) {
     const Bytes& d = c.data;
-    size_t o = kFirstVoice;
     while (o + 16 <= d.size()) {
         Voice v;
         v.offset = o;
@@ -99,6 +98,19 @@ static void parseVoices(CardImage& c) {
         c.voices.push_back(std::move(v));
         o = p;
     }
+}
+
+bool loadInternalRom(const Bytes& raw, CardImage& c, std::string& error) {
+    c = CardImage{};
+    c.data = raw;
+    if (!looksLikeInternalRom(c.data)) { error = "Not a QS internal sample ROM dump (no ROM header)"; return false; }
+    // Header: 00 80 00 00 04 'F' 'QS78ROM v20220' 00, then the voice directory in the card format.
+    c.cardName.assign(reinterpret_cast<const char*>(&c.data[5]), 15);
+    while (!c.cardName.empty() && (c.cardName.back() == ' ' || c.cardName.back() == 0)) c.cardName.pop_back();
+    c.isRom = true;
+    parseVoices(c, 0x14);
+    if (c.voices.empty()) { error = "The ROM header is there but no voices were found"; return false; }
+    return true;
 }
 
 bool loadCardImage(const Bytes& raw, CardImage& c, std::string& error) {
@@ -181,8 +193,9 @@ static std::map<Key, std::string> sampleNames(const CardImage& c) {
     for (const auto& v : c.voices)
         for (size_t i = 0; i < v.zones.size(); ++i) {
             const auto& z = v.zones[i];
-            if (z.end <= z.start) continue;
-            Key k{z.start, z.end, z.loopOffset};
+            if (z.end <= z.start || !c.zoneAvailable(z)) continue;
+            const uint32_t base = c.zoneWordBase(z);
+            Key k{base + z.start, base + z.end, z.loopOffset};
             if (!names.count(k)) names[k] = sampleFileName(v, i, z);
         }
     return names;
@@ -198,10 +211,55 @@ std::vector<ExportedSample> exportSamples(const CardImage& c) {
         int root = 60;
         for (const auto& v : c.voices)
             for (const auto& z : v.zones)
-                if (z.start == start && z.end == end) root = z.root;
+                if (c.zoneWordBase(z) + z.start == start && c.zoneWordBase(z) + z.end == end) root = z.root;
         // The last word repeats the loop-start word, so the loop ends one word early.
-        out.push_back({name, makeWav(pcm.data(), n, 48000, root, loop ? long(loop) : -1, loop ? long(n) - 2 : -1)});
+        // Every QS sample loops from its loop offset to the end; offset 0 (single-cycle waves) loops the whole sample.
+        const bool loops = long(loop) + 2 < long(n);
+        out.push_back({name, makeWav(pcm.data(), n, 48000, root, loops ? long(loop) : -1, loops ? long(n) - 2 : -1)});
     }
+    return out;
+}
+
+std::string voiceGroupName(const CardImage& c, int g) {
+    static const char* keys[] = {"Piano", "Chromatic", "Organ", "Guitar", "Bass", "String", "Brass", "Woodwind",
+                                 "Synth", "Wave", "Noise", "Voice", "Ethnic", "Drums", "Percussion", "Sound FX"};
+    static const char* drums[] = {"Kick", "Snare", "Toms", "Cymbal", "Percussion", "Sound FX", "Wave"};
+    if (g >= 0 && g < 16) return keys[g];
+    if (!c.isRom && g >= 0 && g < int(c.groups.size())) {
+        std::string n = c.groups[size_t(g)];
+        while (!n.empty() && n.back() == ' ') n.pop_back();
+        if (!n.empty()) return n;
+    }
+    if (g >= 16 && g < 24) return "Card " + std::to_string(g - 15);
+    if (g == 24) return "Rhythm";
+    if (g >= 48 && g < 55) return std::string("Drum ") + drums[g - 48];
+    if (g >= 55 && g < 61) return "Card drums " + std::to_string(g - 54);
+    if (g == 61) return "Drum rhythm";
+    return "Group " + std::to_string(g);
+}
+
+std::vector<Region> voiceRegions(const Voice& v) {
+    std::vector<Region> out;
+    const int nz = int(v.splits.size()) + 1;
+    std::vector<int> vb{0};
+    if (v.layers > 1 && v.velSplit1 < 128) vb.push_back(v.velSplit1);
+    if (v.layers > 2 && v.velSplit2 < 128) vb.push_back(v.velSplit2);
+    vb.push_back(128);
+    for (int L = 0; L < v.layers; ++L)
+        for (int k = 0; k < nz; ++k) {
+            const size_t zi = size_t(k * v.layers + L);
+            if (zi >= v.zones.size()) continue;
+            Region r;
+            r.zone = &v.zones[zi];
+            r.lo = k == 0 ? 0 : std::min(127, v.splits[size_t(k - 1)] + 1 + kSplitOffset);
+            r.hi = k == nz - 1 ? 127 : std::min(127, v.splits[size_t(k)] + kSplitOffset);
+            if (r.lo > r.hi) continue;
+            if (v.layers > 1 && L + 1 < int(vb.size())) {
+                r.lovel = std::max(1, vb[size_t(L)]);
+                r.hivel = vb[size_t(L) + 1] - 1;
+            }
+            out.push_back(r);
+        }
     return out;
 }
 
@@ -221,7 +279,7 @@ std::vector<std::pair<std::string, std::string>> exportSfz(const CardImage& c) {
                 const size_t zi = size_t(k * v.layers + L);
                 if (zi >= v.zones.size()) continue;
                 const auto& z = v.zones[zi];
-                auto it = names.find(Key{z.start, z.end, z.loopOffset});
+                auto it = names.find(Key{c.zoneWordBase(z) + z.start, c.zoneWordBase(z) + z.end, z.loopOffset});
                 if (it == names.end()) continue;
                 const int lo = k == 0 ? 0 : std::min(127, v.splits[size_t(k - 1)] + 1 + kSplitOffset);
                 const int hi = k == nz - 1 ? 127 : std::min(127, v.splits[size_t(k)] + kSplitOffset);
@@ -230,7 +288,7 @@ std::vector<std::pair<std::string, std::string>> exportSfz(const CardImage& c) {
                      " pitch_keycenter=" + std::to_string(z.root);
                 if (v.layers > 1 && L + 1 < int(vb.size()))
                     t += " lovel=" + std::to_string(std::max(1, vb[size_t(L)])) + " hivel=" + std::to_string(vb[size_t(L) + 1] - 1);
-                t += z.loopOffset ? " loop_mode=loop_continuous\n" : " loop_mode=one_shot\n";
+                t += z.loopOffset + 2 < z.end - z.start ? " loop_mode=loop_continuous\n" : " loop_mode=one_shot\n";
             }
         char pre[16];
         std::snprintf(pre, sizeof pre, "g%02x_%03d_", v.group, v.index);

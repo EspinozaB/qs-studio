@@ -5,6 +5,16 @@ everything it saves goes in a `QS Studio Data` folder next to the program.
 
 **Status: 0.4.2 pre-alpha.** Only being tested by the author so far. See [Versions](#versions).
 
+## Platforms
+
+| | Windows | macOS (Apple silicon and Intel) | Linux |
+|---|---|---|---|
+| QS Studio (editor, librarian) | yes | yes (unsigned for now) | yes |
+| QS Sound Player plugin | VST3 + standalone | VST3, AU + standalone | VST3, LV2 + standalone |
+
+Builds of every platform are on the [latest release](https://github.com/EspinozaB/qs-studio/releases/tag/latest).
+The Windows build is the one tested most; macOS and Linux builds are new in 0.6.0.
+
 ## What it does
 
 The window works like a hardware editor: pages in a sidebar grouped by job, a plain-language summary at the top of each page and a
@@ -26,6 +36,7 @@ Change it under **Panel look**.
 |---|---|
 | **Play** > Programs | Every bank (User, Preset 1-3, GenMIDI, card banks 1-11) with names and search, and the virtual front panel. Click, arrow or use the panel buttons to select programs on the QS; double-click or EDIT to edit. **Read this bank from QS** fills in names once; they are cached in `QSStudio.library` next to the exe. Audition a program in the edit buffer, store it to a User slot, or copy a bank onto a RAM card bank. |
 | **Edit** > Program Editor | All four sounds on one screen plus full pages for Voice, Pitch, Filter, Amp, Range, Mod, LFOs, Envelopes and Tracking, and every drum of a drum kit. Changes go to the QS live. Get/Send the edit buffer, Store to User, open/save .syx. |
+| **Play** > Sound Player | Opens a QCard image or a QS internal sample ROM dump and plays its voices (key splits, velocity layers, loops) from the keyboard, your controller or the computer keys, through this computer's audio. Not the full QS engine yet: no QS filters, envelopes or effects. The same player is a VST3/AU/LV2 plugin. |
 | **Edit** > Mix Editor | The 16 channels of a mix: program and bank, on/off, volume, pan, output, effect level and bus, octave and semitone, key range, MIDI in/out, keyboard and controller switches, and which channel's effect the mix uses. Live edits, Store to User mix, open/save .syx. **Edit** on a channel opens that channel's program inside the mix. |
 | **Edit** > Effects Editor | An effect patch for the program or the mix: the configuration (1 Reverb, 2 Reverbs, Lezlie and Reverb, Reverb and EQ, Overdrive and Lezlie), then every pitch, delay, reverb, lezlie, overdrive, EQ and modulation parameter, shown for the effect types in use. Live edits, Store to a User effect, open/save .syx. |
 | **Transfer** > Backup & Restore | **Back up now** asks the QS for all User programs, mixes, effects and Global settings and saves one .syx (checked for all 357 parts). **Restore** previews a file and sends it back (Global only if you tick it). Manual capture for dumps started from the QS. |

@@ -61,12 +61,12 @@ std::string mixValueText(const MixParam& p, int raw) {
     if (n == "FX program change") return onOff();
     if (n == "FX MIDI channel") return "Ch " + std::to_string(raw + 1);
     if (n == "Pan") {
-        // QS manuals: "<3 to 3>, or PROG"; stored 0-6 = <3 .. 3>, 7 = PROG.
-        static const char* pans[] = {"<3", "<2", "<1", "<0>", "1>", "2>", "3>", "Prog"};
+        // As the QS displays it: <3 .. <> .. 3>, then PROG.
+        static const char* pans[] = {"<3", "<2", "<1", "<>", "1>", "2>", "3>", "Prog"};
         return pans[std::clamp(raw, 0, 7)];
     }
     if (n == "Output") {
-        static const char* outs[] = {"Main", "Aux", "Off", "Prog"};  // QS7/QS8 manual: L/R, Aux, Off, PROG (the QS6 has no Aux)
+        static const char* outs[] = {"Main", "Aux (QS6: Off)", "Off", "Prog"};  // QS7/8 display: L/R AUX OFF PROG; QS6: ON OFF OFF PROG
         return outs[std::clamp(raw, 0, 3)];
     }
     if (n == "Effect level") return raw >= 100 ? "Prog" : std::to_string(raw);

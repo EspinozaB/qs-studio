@@ -44,8 +44,6 @@ int totalWidth() {
     return w;
 }
 
-juce::String noteName(int n) { return qs::mixValueText(qs::mixChannelParam(qs::findMixChannelParam("Low note")), n); }
-
 }  // namespace
 
 // One channel: a control per column.

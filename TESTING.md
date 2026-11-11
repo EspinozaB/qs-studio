@@ -9,6 +9,18 @@ Back up both synths before anything that writes to them.
 - [ ] Connection: pick MIDI in/out, Connect. The pill says "Connected to your QS6 (OS ...)". Same for the QSR.
 - [ ] Switching synths: the panel look changes, and `QSStudio.QS6.library` / `QSStudio.QSR.library` both appear in `QS Studio Data`.
 
+## 0.6.0: what's new to test
+- [ ] **Mix switching:** click through 10-20 mixes, fast and slow. QS Studio now re-sends Mix mode every time, spaces the steps
+      out, checks the QS's mix name afterwards and retries once if it didn't switch. If one still fails, the status bar says so:
+      send that day's log (Connection > Open the logs).
+- [ ] **Sound Player** (Play page): Audio output... pick your interface; open the QSR ROM dump (or a card image); play voices
+      from the keyboard, your controller and the computer keys. Voices marked "% in this file" need the ROM's second chip.
+- [ ] **QS Sound Player plugin:** load the VST3 in your DAW, open the same file, play it from a MIDI track; save and reopen the
+      project (it should remember the file and the voice).
+- [ ] **Effects Editor:** easier to read? Each column is one send; delay and predelay are single millisecond controls now.
+- [ ] **Slider values:** drag Volume and Controller A on the QS6 panel strip; the number shows over the cap, not cut off.
+- [ ] macOS / Linux testers: does QS Studio start, find MIDI ports and keep its "QS Studio Data" folder next to it?
+
 ## 0.5.0: what's new to test (QS6)
 Turn on **Log MIDI traffic** (Connection page) and attach today's log (**Open the logs**) to anything that misbehaves.
 - [ ] Global > MIDI Program Select is **On** before you start.

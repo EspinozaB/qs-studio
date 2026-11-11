@@ -315,20 +315,35 @@ struct Session : private juce::MidiKeyboardState::Listener, private juce::MidiIn
         settings().saveIfNeeded();
     }
 
+    // One audio device for the whole app (recorder and sound player both use it), opened on first use with the saved setup.
+    juce::AudioDeviceManager& audio() {
+        if (!audioOpened) {
+            audioOpened = true;
+            std::unique_ptr<juce::XmlElement> state(juce::parseXML(settings().getValue("audioState")));
+            audioDevices.initialise(2, 2, state.get(), true);
+        }
+        return audioDevices;
+    }
+    // Notes from the on-screen keyboard and the controller go to the QS; the sound player can turn that off.
+    std::atomic<bool> notesToQs{true};
+
     // Transfer pace (Connection page): stretches the waits in long reads for slow or flaky MIDI interfaces.
     static int paced(int ms) {
         const int pace = settings().getIntValue("transferPace", 0);
         return ms * (pace == 2 ? 4 : pace == 1 ? 2 : 1);
     }
 
+    juce::AudioDeviceManager audioDevices;
+    bool audioOpened = false;
     bool programModeSent = false;  // Program mode is selected once per connection, not on every click
     int checkToken = 0;
-    bool checkMix = false;
+    bool checkMix = false, checkIsRetry = false;
+    int checkBank = 0, checkNumber = 0;
     juce::String checkExpected, checkWhat;
     juce::uint32 checkSentAt = 0;
 
     // Select a program on the QS: Program mode, bank select, program change, then a check that the QS really switched.
-    void selectProgram(int bank, int prog) {
+    void selectProgram(int bank, int prog, bool slow = false) {
         currentBank = bank;
         currentProgram = prog;
         qslog::action("Select program: " + juce::String(kBanks[size_t(bank)].title) + " " + juce::String(prog) + " \"" +
@@ -340,16 +355,15 @@ struct Session : private juce::MidiKeyboardState::Listener, private juce::MidiIn
             setProgramSelect(1);
             if (setStatus) setStatus("Program Select on the QS was set to one channel, which stops program changes. QS Studio set it back to On.");
         }
-        // Program mode on the first selection, and again whenever a parameter edit may have left an edit page showing.
-        if (!programModeSent || midi.editScreenShown) {
-            midi.send(qs::modeSelect(0));
-            programModeSent = true;
-            mixModeSent = false;
-        }
+        // Program mode every time: an edit page may be showing, or someone pressed MIX on the QS (QS Studio can't see that).
+        midi.send(qs::modeSelect(0));
+        programModeSent = true;
+        mixModeSent = false;
+        if (slow) juce::Thread::sleep(60);
         midi.sendMidi(juce::MidiMessage::controllerEvent(channel, 0, kBanks[size_t(bank)].cc0));
         midi.sendMidi(juce::MidiMessage::programChange(channel, prog));
         if (currentProgramChanged) currentProgramChanged(bank, prog);
-        scheduleCheck(false, bank, prog);
+        scheduleCheck(false, bank, prog, slow);
     }
 
     // Mixes can only be picked over MIDI when Global > MIDI Program Select is set to a channel (Ch 1-16): the QS then
@@ -364,36 +378,43 @@ struct Session : private juce::MidiKeyboardState::Listener, private juce::MidiIn
         midi.send(qs::paramEdit(0, 0, 0, 5, 0, 0, value));
     }
 
-    void selectMix(int bank, int mix) {
+    void selectMix(int bank, int mix, bool slow = false) {
         currentMixBank = bank;
         currentMix = mix;
-        if (programModeSent || !mixModeSent) {
-            midi.send(qs::modeSelect(1));
-            mixModeSent = true;
-            programModeSent = false;
-        }
+        // Mix mode every time: someone may have pressed PROGRAM on the QS since, and QS Studio can't see that.
+        midi.send(qs::modeSelect(1));
+        mixModeSent = true;
+        programModeSent = false;
+        const int gap = slow ? 60 : 15;  // ms between steps, longer on the automatic retry
         const int ch = mixSelectChannel();
         const int original = global.programSelect;
         const bool temporary = original < 2;
-        if (temporary) midi.send(qs::paramEdit(0, 0, 0, 5, 0, 0, ch + 1));  // Program Select = this channel, for this change only
+        if (temporary) {
+            midi.send(qs::paramEdit(0, 0, 0, 5, 0, 0, ch + 1));  // Program Select = this channel, for this change only
+            juce::Thread::sleep(gap);
+        }
         midi.sendMidi(juce::MidiMessage::controllerEvent(ch, 0, kBanks[size_t(bank)].cc0));
         midi.sendMidi(juce::MidiMessage::programChange(ch, mix));
         if (temporary) {
+            juce::Thread::sleep(gap * 2);
             midi.send(qs::paramEdit(0, 0, 0, 5, 0, 0, original));  // and back to the user's setting
             midi.send(qs::modeSelect(1));  // the edit above leaves the Global page on the QS's display; back to Mix play
         }
-        qslog::action("Select mix: " + juce::String(kBanks[size_t(bank)].title) + " " + juce::String(mix) + " \"" + library.mixNameOf(bank, mix) +
-                      "\" via channel " + juce::String(ch) + (temporary ? " (Program Select set for the change, then restored to " +
-                                                                              juce::String(original) + ")" : juce::String()));
+        qslog::action(juce::String(slow ? "Retry: select mix: " : "Select mix: ") + kBanks[size_t(bank)].title + " " + juce::String(mix) + " \"" +
+                      library.mixNameOf(bank, mix) + "\" via channel " + juce::String(ch) +
+                      (temporary ? " (Program Select set for the change, then restored to " + juce::String(original) + ")" : juce::String()));
         if (currentProgramChanged) currentProgramChanged(bank, mix);
-        scheduleCheck(true, bank, mix);
+        scheduleCheck(true, bank, mix, slow);
     }
 
     // ---- Did the QS really switch? A moment after a selection, read its edit buffer and compare the name.
     // Mismatches go to the status bar and the log, so "QS Studio changed but the synth didn't" shows up in bug reports.
-    void scheduleCheck(bool mix, int bank, int number) {
+    void scheduleCheck(bool mix, int bank, int number, bool isRetry = false) {
         const int token = ++checkToken;
         checkMix = mix;
+        checkBank = bank;
+        checkNumber = number;
+        checkIsRetry = isRetry;
         checkExpected = mix ? library.mixNameOf(bank, number) : library.nameOf(bank, number);
         checkWhat = juce::String(mix ? "mix " : "program ") + kBanks[size_t(bank)].title + " " + juce::String(number);
         juce::Timer::callAfterDelay(450, [this, alive = aliveFlag, token] {
@@ -423,6 +444,16 @@ struct Session : private juce::MidiKeyboardState::Listener, private juce::MidiIn
             qslog::action("Check: QS is on \"" + got + "\" after selecting " + checkWhat + " (name not in the library to compare)");
         } else if (got == expected) {
             qslog::action("Check OK: QS is on \"" + got + "\"");
+        } else if (!checkIsRetry) {
+            // Try once more, slower, before bothering anyone.
+            qslog::action("Check: selected " + checkWhat + " \"" + expected + "\" but the QS is on \"" + got + "\"; trying again");
+            const bool mixAgain = checkMix;
+            const int b = checkBank, n = checkNumber;
+            juce::Timer::callAfterDelay(100, [this, alive = aliveFlag, mixAgain, b, n] {
+                if (!*alive) return;
+                if (mixAgain) selectMix(b, n, true);
+                else selectProgram(b, n, true);
+            });
         } else {
             qslog::action("Check FAILED: selected " + checkWhat + " \"" + expected + "\" but the QS is on \"" + got + "\"");
             if (setStatus)
@@ -444,10 +475,10 @@ private:
         return e;
     }
     void handleNoteOn(juce::MidiKeyboardState*, int, int note, float vel) override {
-        if (!echoing()) midi.sendMidi(juce::MidiMessage::noteOn(channel, note, juce::jlimit(0.01f, 1.0f, vel)));
+        if (!echoing() && notesToQs) midi.sendMidi(juce::MidiMessage::noteOn(channel, note, juce::jlimit(0.01f, 1.0f, vel)));
     }
     void handleNoteOff(juce::MidiKeyboardState*, int, int note, float) override {
-        if (!echoing()) midi.sendMidi(juce::MidiMessage::noteOff(channel, note));
+        if (!echoing() && notesToQs) midi.sendMidi(juce::MidiMessage::noteOff(channel, note));
     }
 
     // From the MIDI controller (MIDI input thread).
@@ -455,7 +486,8 @@ private:
         if (in.isSysEx() || in.isActiveSense() || in.isMidiClock() || in.getChannel() == 0) return;
         auto m = in;
         m.setChannel(channel);
-        midi.sendMidi(m);
+        if (notesToQs || !(m.isNoteOnOrOff() || m.isPitchWheel() || m.isController())) midi.sendMidi(m);
+        if (auto* p = playerInput.load()) p->addMessageToQueue(m);  // straight to the sound player, without the UI's delay
         // Show it on screen (keys light up, wheels and sliders move) on the message thread, without sending it twice.
         juce::MessageManager::callAsync([this, m, alive = aliveFlag] {
             if (!*alive) return;
@@ -470,6 +502,9 @@ private:
 
 public:
     std::function<void(const juce::MidiMessage&)> controllerMoved;  // a message from the MIDI controller, on the message thread
+    std::atomic<juce::MidiMessageCollector*> playerInput{nullptr};   // the sound player, while it's listening
+    // True while the controller's notes are being shown on the on-screen keyboard (they're already sent).
+    static bool isEcho() { return echoing(); }
 
 private:
 

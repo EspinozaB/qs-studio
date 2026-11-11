@@ -45,10 +45,17 @@ private:
     juce::ToggleButton liveToggle{"Live edit"};
     juce::TextButton getBtn{"Get from QS"}, sendBtn{"Send to QS"}, storeBtn{"Store to User..."}, openBtn{"Open .syx"}, saveBtn{"Save .syx"};
     juce::Label note;
+    // One effect block (Pitch, Delay, Reverb, Lezlie, Overdrive on a send, or the EQ / modulation), drawn as a card.
+    struct Block {
+        juce::String kind;  // "Pitch", "Delay", "Reverb", "Lezlie", "Overdrive", "Equalizer", "Modulation"
+        int send = 0;       // 1-4, 0 for the patch-wide blocks
+        std::vector<Control*> controls;
+        juce::Rectangle<int> card;
+    };
+    class Content;
     juce::Viewport view;
-    juce::Component content;
-    juce::OwnedArray<juce::Label> headers;
+    std::unique_ptr<Content> content;
     juce::OwnedArray<Control> controls;
-    std::vector<std::pair<juce::Label*, std::vector<Control*>>> groups;
+    std::vector<Block> blocks;
     std::unique_ptr<juce::FileChooser> chooser;
 };

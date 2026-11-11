@@ -32,7 +32,12 @@ struct CardImage {
     std::vector<std::string> programNames;  // 128
     std::vector<std::string> mixNames;      // 100
 
+    bool isRom = false;               // an internal sample ROM dump rather than a card
     bool valid() const { return !voices.empty() || !programNames.empty(); }
+    // In a ROM, a zone's start-address bit 22 (flagsB bit 0) picks the second 8 MB chip. A dump of the first chip alone
+    // can't play those zones.
+    uint32_t zoneWordBase(const Zone& z) const { return isRom && (z.flagsB & 1) ? 0x400000u : 0u; }
+    bool zoneAvailable(const Zone& z) const { return size_t(zoneWordBase(z) + z.end) * 2 + 1 < data.size(); }
     size_t uniqueSampleCount() const;
     int16_t sampleAt(uint32_t word) const;
 
@@ -41,8 +46,21 @@ struct CardImage {
     Bytes mix(int i) const;  // 138 bytes (new format) or 123 bytes (R-series old format)
 };
 
+// Where each zone of a voice plays: key range (MIDI notes) and velocity range. Same mapping as the SFZ export.
+struct Region {
+    int lo = 0, hi = 127, lovel = 1, hivel = 127;
+    const Zone* zone = nullptr;
+};
+std::vector<Region> voiceRegions(const Voice& v);
+
+// Name of a voice directory group: 0-15 the keyboard groups, 16-23 card groups, 24 Rhythm, 48-61 the drum groups
+// (the same groups the QS shows when you pick a sample).
+std::string voiceGroupName(const CardImage& c, int group);
+
 // Load and normalize an image (.img/.bin). Returns false with error text on failure.
 bool loadCardImage(const Bytes& raw, CardImage& out, std::string& error);
+// A QS7/QS8/QSR internal sample ROM dump (from Cards & ROM): same voice directory as a card, at the start of the ROM.
+bool loadInternalRom(const Bytes& raw, CardImage& out, std::string& error);
 // Program-bank only check for RAM cards and partial reads.
 bool looksLikeCard(const Bytes& data);
 

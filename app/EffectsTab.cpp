@@ -14,6 +14,18 @@ int displayed(const qs::EffectParam& p, int raw) {
     if (isHorn(p)) return raw >= 64 ? raw - 128 : raw;
     return raw + p.offset;
 }
+// "Send 1 reverb decay" in the Reverb card is just "Decay".
+juce::String shortCaption(const qs::EffectParam& p) {
+    auto n = juce::String(qs::effectShortName(p));
+    for (auto kind : {"Pitch ", "Delay ", "Reverb ", "Lezlie ", "Overdrive "})
+        if (n.startsWithIgnoreCase(kind) && n.length() > juce::String(kind).length()) {
+            n = n.substring(juce::String(kind).length());
+            break;
+        }
+    n = n.replace("prdly", "predelay").replace("10ms", "(10 ms steps)").replace("1ms", "(1 ms steps)").replace("MIDImod", "Mod");
+    return n.substring(0, 1).toUpperCase() + n.substring(1);
+}
+
 int rawFrom(const qs::EffectParam& p, int shown) {
     if (isHorn(p)) return shown < 0 ? shown + 128 : shown;
     return shown - p.offset;
@@ -24,16 +36,36 @@ int rawFrom(const qs::EffectParam& p, int shown) {
 // One parameter: a drop-down for named choices, otherwise a slider. Caption above.
 class EffectsTab::Control : public juce::Component {
 public:
-    Control(EffectsTab& t, const qs::EffectParam& def, bool type) : tab(t), p(def), isType(type) {
-        caption.setText(qs::effectShortName(p), juce::dontSendNotification);
+    // fineParam: for a time split over two parameters (10 ms steps + 1 ms steps), one control in milliseconds.
+    Control(EffectsTab& t, const qs::EffectParam& def, bool type, const qs::EffectParam* fineParam = nullptr)
+        : tab(t), p(def), isType(type), fine(fineParam) {
+        auto cap = shortCaption(p);
+        if (fine != nullptr) {
+            cap = cap.replace("(10 ms steps)", "").trim();
+            cap = (cap.isEmpty() ? juce::String("Time") : cap) + " (ms)";
+        }
+        caption.setText(cap, juce::dontSendNotification);
         caption.setFont(theme::uiFont(12.0f, true));
+        caption.setTooltip(p.name);
         caption.setColour(juce::Label::textColourId, theme::dim);
         addAndMakeVisible(caption);
-        const bool named = !qs::effectValueText(p, 0).empty() && p.limit <= 12 && !isHorn(p) &&
+        const bool named = !qs::effectValueText(p, 0, t.fx.config()).empty() && p.limit <= 40 && !isHorn(p) &&
                            !juce::String(p.name).contains("ms") && !(p.offset == -99 && p.limit == 198);
-        if (named) {
+        if (fine != nullptr) {
+            useSlider = true;
+            slider.setSliderStyle(juce::Slider::LinearBar);
+            slider.setRange(0, p.limit * 10 + fine->limit, 1);
+            slider.textFromValueFunction = [](double v) { return juce::String(int(v)) + " ms"; };
+            slider.onValueChange = [this] {
+                if (loading) return;
+                const int ms = int(slider.getValue());
+                tab.changed(p, ms / 10, false);
+                tab.changed(*fine, ms % 10, false);
+            };
+            addAndMakeVisible(slider);
+        } else if (named) {
             for (int i = 0; i <= p.limit; ++i) {
-                auto text = juce::String(qs::effectValueText(p, i));
+                auto text = juce::String(qs::effectValueText(p, i, t.fx.config()));
                 combo.addItem(text.isNotEmpty() ? text : juce::String(i), i + 1);
             }
             combo.onChange = [this] {
@@ -60,7 +92,8 @@ public:
     void load() {
         const juce::ScopedValueSetter<bool> l(loading, true);
         const int raw = tab.fx.raw(p);
-        if (useSlider) slider.setValue(displayed(p, raw), juce::dontSendNotification);
+        if (fine != nullptr) slider.setValue(raw * 10 + tab.fx.raw(*fine), juce::dontSendNotification);
+        else if (useSlider) slider.setValue(displayed(p, raw), juce::dontSendNotification);
         else combo.setSelectedId(raw + 1, juce::dontSendNotification);
     }
 
@@ -74,6 +107,7 @@ public:
     EffectsTab& tab;
     const qs::EffectParam& p;
     const bool isType;
+    const qs::EffectParam* fine;
 
 private:
     juce::Label caption;
@@ -82,7 +116,30 @@ private:
     bool useSlider = false, loading = false;
 };
 
+// Draws the cards and the send titles behind the controls.
+class EffectsTab::Content : public juce::Component {
+public:
+    std::vector<std::pair<juce::Rectangle<int>, juce::String>> cards, columns;
+    void paint(juce::Graphics& g) override {
+        for (auto& [r, title] : columns) {
+            g.setColour(theme::accent);
+            g.setFont(theme::uiFont(13.0f, true));
+            g.drawText(title, r, juce::Justification::centredLeft);
+        }
+        for (auto& [r, title] : cards) {
+            g.setColour(theme::panel);
+            g.fillRoundedRectangle(r.toFloat(), 8.0f);
+            g.setColour(theme::line);
+            g.drawRoundedRectangle(r.toFloat().reduced(0.5f), 8.0f, 1.0f);
+            g.setColour(theme::text);
+            g.setFont(theme::uiFont(14.0f, true));
+            g.drawText(title.toUpperCase(), r.withHeight(26).reduced(10, 0), juce::Justification::centredLeft);
+        }
+    }
+};
+
 EffectsTab::EffectsTab(Session& s) : session(s) {
+    content = std::make_unique<Content>();
     addAndMakeVisible(lcd);
     for (int c = 0; c < qs::kEffectConfigs; ++c) configBox.addItem(juce::String(c + 1) + ": " + qs::effectConfigName(c), c + 1);
     configBox.setTooltip("Which effects the patch has and how the four sends are wired (QS manual, Chapter 7). Pick this first: "
@@ -103,8 +160,8 @@ EffectsTab::EffectsTab(Session& s) : session(s) {
     for (auto* l : {&configLabel, &targetLabel}) l->setColour(juce::Label::textColourId, theme::dim);
     liveToggle.setToggleState(settings().getBoolValue("liveEdit", true), juce::dontSendNotification);
     liveToggle.onClick = [this] { settings().setValue("liveEdit", liveToggle.getToggleState()); };
-    note.setText("Reverb and Lezlie input sources show as numbers: the manual names them (Input 1: Pitch or Delay output; "
-                 "Input 2: Pitch, Delay or the dry send) but not their order. Modulation sources follow the manual's list order.",
+    note.setText("Each column is one effect send: what a program sends to bus 1-4 goes through that column's effects, top to bottom. "
+                 "Pick the configuration first; a block's type (chorus, flange, delay type...) decides which settings it shows.",
                  juce::dontSendNotification);
     note.setColour(juce::Label::textColourId, theme::dim);
     note.setFont(theme::uiFont(12.0f));
@@ -119,7 +176,7 @@ EffectsTab::EffectsTab(Session& s) : session(s) {
     for (juce::Component* c : std::initializer_list<juce::Component*>{&configBox, &configLabel, &targetBox, &targetLabel, &liveToggle, &getBtn,
                                                                     &sendBtn, &storeBtn, &openBtn, &saveBtn, &note})
         addAndMakeVisible(c);
-    view.setViewedComponent(&content, false);
+    view.setViewedComponent(content.get(), false);
     view.setScrollBarsShown(true, false);
     addAndMakeVisible(view);
     session.midi.addListener(this);
@@ -140,36 +197,38 @@ void EffectsTab::openEffects(const qs::Effects& e, const juce::String& w, int ed
 }
 
 void EffectsTab::rebuild() {
-    headers.clear();
     controls.clear();
-    groups.clear();
+    blocks.clear();
     const int c = fx.config();
     configBox.setSelectedId(c + 1, juce::dontSendNotification);
     const auto& cfg = qs::effectConfig(c);
-    juce::String lastSection;
     for (int i = 0; i < cfg.count; ++i) {
         if (!fx.visible(c, i)) continue;
         const auto& p = cfg.params[i];
-        // Several types share one "mix" row each: show only the first visible one with a given name per section.
-        bool dup = false;
-        if (!groups.empty())
-            for (auto* existing : groups.back().second)
-                if (juce::String(existing->p.name) == p.name) dup = true;
-        if (dup) continue;
-        if (lastSection != p.section || groups.empty()) {
-            lastSection = p.section;
-            auto* h = headers.add(new juce::Label({}, juce::String(p.section).toUpperCase()));
-            h->setFont(theme::uiFont(13.0f, true));
-            h->setColour(juce::Label::textColourId, theme::accent);
-            content.addAndMakeVisible(h);
-            groups.push_back({h, {}});
+        // "Reverb Send 2" -> kind Reverb, send 2; "Equalizer" / "Modulation" -> send 0.
+        const auto section = juce::String(p.section);
+        const auto kind = section.upToFirstOccurrenceOf(" ", false, false);
+        const int send = section.contains("Send") ? section.getTrailingIntValue() : 0;
+        auto it = std::find_if(blocks.begin(), blocks.end(), [&](const Block& b) { return b.kind == kind && b.send == send; });
+        if (it == blocks.end()) {
+            blocks.push_back({kind, send, {}, {}});
+            it = blocks.end() - 1;
         }
+        // Several effect types share a "mix" row: one per block is enough (only the current type's is visible anyway).
+        if (std::any_of(it->controls.begin(), it->controls.end(), [&](Control* x) { return juce::String(x->p.name) == p.name; })) continue;
+        // The 1 ms half of a delay or predelay time is part of its 10 ms control.
+        const auto name = juce::String(p.name);
+        if (name.endsWith("1ms") && !name.endsWith("10ms")) continue;
+        const qs::EffectParam* fine = nullptr;
+        if (name.endsWith("10ms"))
+            for (int j = 0; j < cfg.count; ++j)
+                if (juce::String(cfg.params[j].name) == name.dropLastCharacters(4) + "1ms" && fx.visible(c, j)) fine = &cfg.params[j];
         bool isType = false;
         for (int j = 0; j < cfg.count; ++j)
             if (cfg.params[j].condIndex == i) isType = true;
-        auto* ctl = controls.add(new Control(*this, p, isType));
-        content.addAndMakeVisible(ctl);
-        groups.back().second.push_back(ctl);
+        auto* ctl = controls.add(new Control(*this, p, isType, fine));
+        content->addAndMakeVisible(ctl);
+        it->controls.push_back(ctl);
     }
     loadValues();
     layoutContent();
@@ -318,18 +377,51 @@ void EffectsTab::resized() {
     layoutContent();
 }
 
+// Sends side by side as columns (each a chain of cards, top to bottom in signal order), then the patch-wide cards.
 void EffectsTab::layoutContent() {
-    const int w = juce::jmax(400, view.getWidth() - 16), cellW = 190, cellH = 48, gap = 12;
-    const int perRow = juce::jmax(1, (w + gap) / (cellW + gap));
-    int y = 0;
-    for (auto& [h, ctls] : groups) {
-        h->setBounds(0, y, w, 22);
-        y += 24;
-        for (size_t i = 0; i < ctls.size(); ++i) {
-            const int col = int(i) % perRow, row = int(i) / perRow;
-            ctls[i]->setBounds(col * (cellW + gap), y + row * (cellH + 6), cellW, cellH);
-        }
-        y += int((ctls.size() + size_t(perRow) - 1) / size_t(perRow)) * (cellH + 6) + 10;
+    const int w = juce::jmax(400, view.getWidth() - 14), gap = 12, cellH = 46, pad = 10, titleH = 26;
+    std::vector<int> sends;
+    for (auto& b : blocks)
+        if (b.send > 0 && std::find(sends.begin(), sends.end(), b.send) == sends.end()) sends.push_back(b.send);
+    std::sort(sends.begin(), sends.end());
+    const int ncol = juce::jmax(1, int(sends.size()));
+    const int colW = (w - gap * (ncol - 1)) / ncol;
+    auto placeCard = [&](Block& b, int x, int y, int cw) {
+        const int perRow = juce::jmax(1, (cw - 2 * pad + 8) / (160 + 8));
+        const int cellW = (cw - 2 * pad - 8 * (perRow - 1)) / perRow;
+        const int rows = int((b.controls.size() + size_t(perRow) - 1) / size_t(perRow));
+        for (size_t i = 0; i < b.controls.size(); ++i)
+            b.controls[i]->setBounds(x + pad + int(i % size_t(perRow)) * (cellW + 8), y + titleH + int(i / size_t(perRow)) * (cellH + 6), cellW, cellH);
+        b.card = {x, y, cw, titleH + rows * (cellH + 6) + 6};
+        return b.card.getBottom();
+    };
+    int bottom = 0;
+    for (int ci = 0; ci < int(sends.size()); ++ci) {
+        int y = 30;  // room for the column title
+        const int x = ci * (colW + gap);
+        for (auto& b : blocks)
+            if (b.send == sends[size_t(ci)]) y = placeCard(b, x, y, colW) + gap;
+        bottom = juce::jmax(bottom, y);
     }
-    content.setSize(w, juce::jmax(y, 10));
+    // Patch-wide cards share a row.
+    std::vector<Block*> shared;
+    for (auto& b : blocks)
+        if (b.send == 0) shared.push_back(&b);
+    if (!shared.empty()) {
+        const int sw = (w - gap * (int(shared.size()) - 1)) / int(shared.size());
+        int y2 = bottom;
+        for (size_t i = 0; i < shared.size(); ++i) y2 = juce::jmax(y2, placeCard(*shared[i], int(i) * (sw + gap), bottom, sw) + gap);
+        bottom = y2;
+    }
+    content->columns.clear();
+    for (int ci = 0; ci < int(sends.size()); ++ci) {
+        juce::String chain;
+        for (auto& b : blocks)
+            if (b.send == sends[size_t(ci)]) chain << (chain.isEmpty() ? "" : "  >  ") << b.kind;
+        content->columns.push_back({{ci * (colW + gap), 0, colW, 24}, "SEND " + juce::String(sends[size_t(ci)]) + ":  " + chain});
+    }
+    content->cards.clear();
+    for (auto& b : blocks) content->cards.push_back({b.card, b.send > 0 ? b.kind + " " + juce::String(b.send) : b.kind});
+    content->setSize(w, juce::jmax(bottom, 10));
+    content->repaint();
 }

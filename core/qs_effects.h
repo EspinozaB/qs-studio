@@ -31,8 +31,9 @@ const EffectParam& effectConfigParam();  // "Effect configuration" (func 2, page
 const EffectConfigDef& effectConfig(int config);
 const char* effectConfigName(int config);  // manual's names: "1 Reverb", "2 Reverbs", "Lezlie and Reverb", ...
 
-// Text for a value ("Plate 1", "Stereo chorus", "+3 dB"...). "" means show the number.
-std::string effectValueText(const EffectParam& p, int raw);
+// Text for a value ("Plate 1", "Stereo chorus", "+3 dB"...). "" means show the number. config is needed for the
+// modulation destinations, which differ per configuration.
+std::string effectValueText(const EffectParam& p, int raw, int config = -1);
 // Display name without the "Send n " prefix (the section already says which send).
 std::string effectShortName(const EffectParam& p);
 

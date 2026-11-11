@@ -13,8 +13,6 @@ jobs:
 
   windows:
     runs-on: windows-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: Configure
@@ -24,31 +22,104 @@ jobs:
       - name: Collect
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force out | Out-Null
-          Get-ChildItem build -Recurse -Filter "QS Studio.exe" | Select-Object -First 1 | Copy-Item -Destination out/
+          New-Item -ItemType Directory -Force out, player | Out-Null
+          Copy-Item "build/QSStudio_artefacts/Release/QS Studio.exe" "out/QS-Studio.exe"
+          Copy-Item -Recurse "build/QSSoundPlayer_artefacts/Release/VST3/QS Sound Player.vst3" player/
+          Copy-Item "build/QSSoundPlayer_artefacts/Release/Standalone/QS Sound Player.exe" player/
+          Compress-Archive -Path player/* -DestinationPath "out/QS-Sound-Player-Windows.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: QS-Studio-windows
+          name: windows
           path: out/
-      - name: Publish to the "latest" prerelease (main only)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        shell: pwsh
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure (Apple silicon and Intel)
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Collect
+        run: |
+          mkdir -p out player
+          ditto -c -k --keepParent "build/QSStudio_artefacts/Release/QS Studio.app" out/QS-Studio-macOS.zip
+          cp -R "build/QSSoundPlayer_artefacts/Release/VST3/QS Sound Player.vst3" player/
+          cp -R "build/QSSoundPlayer_artefacts/Release/AU/QS Sound Player.component" player/
+          cp -R "build/QSSoundPlayer_artefacts/Release/Standalone/QS Sound Player.app" player/
+          ditto -c -k player out/QS-Sound-Player-macOS.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: out/
+
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libfreetype6-dev libfontconfig1-dev libx11-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libxext-dev libgl1-mesa-dev
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Collect
+        run: |
+          mkdir -p out "app/QS Studio" player
+          cp "build/QSStudio_artefacts/Release/QS Studio" "app/QS Studio/"
+          tar -czf out/QS-Studio-Linux.tar.gz -C app "QS Studio"
+          cp -R "build/QSSoundPlayer_artefacts/Release/VST3/QS Sound Player.vst3" player/
+          cp -R "build/QSSoundPlayer_artefacts/Release/LV2/QS Sound Player.lv2" player/
+          cp "build/QSSoundPlayer_artefacts/Release/Standalone/QS Sound Player" player/
+          tar -czf out/QS-Sound-Player-Linux.tar.gz -C player .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: out/
+
+  # One "latest" prerelease with every platform, from main only.
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [core-tests, windows, macos, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          Copy-Item "out/QS Studio.exe" "out/QS-Studio.exe"
-          $cm = Get-Content CMakeLists.txt -Raw
-          $ver = [regex]::Match($cm, 'project\(QSStudio VERSION ([0-9.]+)').Groups[1].Value
-          $stage = [regex]::Match($cm, 'set\(QS_STAGE "([^"]*)"\)').Groups[1].Value
-          $sha = $env:GITHUB_SHA.Substring(0,7)
-          gh release delete latest --cleanup-tag -y 2>$null
-          $notes = @"
+          ver=$(grep -oP 'project\(QSStudio VERSION \K[0-9.]+' CMakeLists.txt)
+          stage=$(grep -oP 'set\(QS_STAGE "\K[^"]*' CMakeLists.txt)
+          sha=${GITHUB_SHA::7}
+          cat > notes.md <<EOF
           QS Studio $ver $stage, automatic build of main at $sha.
 
           $stage means things change often and some features are untested on hardware. Back up your synth (Backup & Restore) before writing anything to it.
 
-          Put QS-Studio.exe in a folder of its own (Documents, Desktop or a USB stick; not Program Files). It keeps everything it saves in a "QS Studio Data" folder next to it. To update, replace the exe and keep that folder.
+          **QS Studio** (the editor/librarian)
+          - Windows: QS-Studio.exe. Put it in a folder of its own (Documents, Desktop or a USB stick; not Program Files).
+          - macOS (Apple silicon and Intel): QS-Studio-macOS.zip. Unsigned for now: right-click the app, Open, then Open again.
+          - Linux: QS-Studio-Linux.tar.gz. Needs ALSA and X11 (any desktop distro).
+
+          It keeps everything it saves in a "QS Studio Data" folder next to it. To update, replace the program and keep that folder.
+
+          **QS Sound Player** (plays your own QCard images and QS sample ROM dumps; VST3 plugin plus a standalone app)
+          - Windows: QS-Sound-Player-Windows.zip. Copy the .vst3 folder to C:\Program Files\Common Files\VST3.
+          - macOS: QS-Sound-Player-macOS.zip. VST3 to ~/Library/Audio/Plug-Ins/VST3, the .component (AU) to ~/Library/Audio/Plug-Ins/Components.
+          - Linux: QS-Sound-Player-Linux.tar.gz. VST3 to ~/.vst3, LV2 to ~/.lv2.
+
+          No samples, ROMs or card images are included: the player reads files you made from your own synth or cards.
 
           Unofficial; not made or endorsed by Alesis or inMusic.
-          "@
-          gh release create latest "out/QS-Studio.exe" --prerelease --target $env:GITHUB_SHA --title "QS Studio $ver $stage ($sha)" --notes $notes
+          EOF
+          gh release delete latest --cleanup-tag -y || true
+          gh release create latest dist/* --prerelease --target "$GITHUB_SHA" --title "QS Studio $ver $stage ($sha)" --notes-file notes.md

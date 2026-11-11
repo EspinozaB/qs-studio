@@ -14,6 +14,7 @@
 class LibraryTab;
 class EditorTab;
 class MixTab;
+class PlayerTab;
 class EffectsTab;
 
 // Shared helpers
@@ -79,6 +80,7 @@ private:
     LibraryTab* library = nullptr;
     EditorTab* editor = nullptr;
     MixTab* mixEditor = nullptr;
+    PlayerTab* player = nullptr;
     EffectsTab* fxEditor = nullptr;
     ConnectionPage* connection = nullptr;
     GlobalPage* globalPage = nullptr;

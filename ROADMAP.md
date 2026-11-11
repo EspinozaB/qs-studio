@@ -42,9 +42,15 @@ programs apart.
 - Search across every saved library and backup (MIDI Quest's database).
 - Drum pad monitor for e-drum setups (QS SoundEditor's Drum Kit Calibration). Low priority.
 - Drag to reorder in the list (swap and copy cover it for now).
-- Effect input sources and modulation destinations by name: the manual doesn't give their order, so they show as numbers until
-  checked on a QS.
 - QS SoundEditor Pro's full PDF help may list more. We'll add anything it shows.
+
+## 0.6.0
+
+- Sound Player (Play page) and the QS Sound Player plugin (VST3, AU, LV2, standalone): QCard images and internal ROM dumps.
+- Builds for Windows, macOS and Linux.
+- Effects editor regrouped: one column per effect send, a card per effect, delay and predelay times in milliseconds,
+  input sources and modulation destinations named as the QS shows them.
+- Toward the 1:1 emulation: see [docs/EMULATION.md](docs/EMULATION.md).
 
 ## QS6 samples
 

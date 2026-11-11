@@ -54,7 +54,7 @@ private:
     void saveSettings();
 
     Session& session;
-    juce::AudioDeviceManager devices;
+    juce::AudioDeviceManager& devices;  // shared with the Sound Player (Session::audio)
     AudioRecorder recorder;
     std::unique_ptr<juce::AudioDeviceSelectorComponent> selector;
     std::unique_ptr<AutoSampler> sampler;

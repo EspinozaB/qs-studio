@@ -155,8 +155,9 @@ public:
         g.setColour(juce::Colours::white.withAlpha(0.35f));
         g.fillRect(cap.getX() + 3, cap.getCentreY() - 0.5f, cap.getWidth() - 6, 1.0f);
         if (dragging) {
-            juce::Rectangle<float> bubble(box.getRight() + 3, cap.getCentreY() - 10, 30, 20);
-            if (bubble.getRight() > r.getRight()) bubble.setX(box.getX() - 33);
+            // Over the cap, inside this component (a bubble beside the fader would be cut off by its neighbours).
+            auto bubble = juce::Rectangle<float>(r.getX() + 1.0f, cap.getCentreY() - 10.0f, r.getWidth() - 2.0f, 20.0f)
+                              .constrainedWithin(r);
             g.setColour(theme::bezel.withAlpha(0.95f));
             g.fillRoundedRectangle(bubble, 4.0f);
             g.setColour(theme::accent);

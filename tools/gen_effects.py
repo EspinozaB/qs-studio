@@ -72,7 +72,13 @@ for raw in lines:
             FIXES.append(f"config {cur} {section}: {name} send {send}")
         send = n_send - 1
         name = re.sub(r"^Send \d ", f"Send {n_send} ", name)
-    configs[cur].append(dict(num=int(num), name=name, section=section, send=send,
+    # Block from the parameter's own name where the spec's section header is off (config 2 lists its Lezlie under PITCH).
+    sec = section
+    for kind in ("Lezlie", "Overdrive"):
+        if kind.lower() in name.lower() and not sec.startswith(kind):
+            FIXES.append(f"config {cur} {name}: section {sec} -> {kind}")
+            sec = re.sub(r"^\w+", kind, sec)
+    configs[cur].append(dict(num=int(num), name=name, section=sec, send=send,
                              func=int(func), page=int(page), pot=int(pot), off=int(off), lim=int(lim), bits=int(bits),
                              lo=lo, cond=cond))
 

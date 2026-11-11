@@ -155,10 +155,10 @@ static const EffectParam kConfig1[] = {
     {"Modulation", "MIDImod level 2", -1, 1, 1, 2, -99, 198, 498, 8, -1, 0},
 };
 static const EffectParam kConfig2[] = {
-    {"Pitch Send 1", "Send 1 lezlie speed", 0, 0, 0, 1, 0, 1, 77, 7, -1, 0},
-    {"Pitch Send 1", "Send 1 lezlie motor", 0, 0, 0, 0, 0, 1, 84, 1, -1, 0},
-    {"Pitch Send 1", "Send 1 lezlie horn", 0, 0, 0, 2, 0, 6, 85, 7, -1, 0},
-    {"Pitch Send 1", "Send 1 lezlie mix", 0, 5, 0, 0, 0, 99, 99, 7, -1, 0},
+    {"Lezlie Send 1", "Send 1 lezlie speed", 0, 0, 0, 1, 0, 1, 77, 7, -1, 0},
+    {"Lezlie Send 1", "Send 1 lezlie motor", 0, 0, 0, 0, 0, 1, 84, 1, -1, 0},
+    {"Lezlie Send 1", "Send 1 lezlie horn", 0, 0, 0, 2, 0, 6, 85, 7, -1, 0},
+    {"Lezlie Send 1", "Send 1 lezlie mix", 0, 5, 0, 0, 0, 99, 99, 7, -1, 0},
     {"Delay Send 1", "Send 1 delay input", 0, 4, 0, 0, -99, 198, 108, 8, -1, 0},
     {"Delay Send 1", "Send 1 delay 10ms", 0, 4, 0, 1, 0, 79, 116, 7, -1, 0},
     {"Delay Send 1", "Send 1 delay 1ms", 0, 4, 0, 2, 0, 9, 123, 4, -1, 0},
@@ -401,6 +401,10 @@ static const EffectParam kConfig4[] = {
 // fixed: config 1 Pitch Send 3: Send 2 pitch speed send 2
 // fixed: config 1 Pitch Send 3: Send 2 pitch shape send 2
 // fixed: config 1 Pitch Send 3: Send 2 pitch depth send 2
+// fixed: config 2 Send 1 lezlie speed: section Pitch Send 1 -> Lezlie
+// fixed: config 2 Send 1 lezlie motor: section Pitch Send 1 -> Lezlie
+// fixed: config 2 Send 1 lezlie horn: section Pitch Send 1 -> Lezlie
+// fixed: config 2 Send 1 lezlie mix: section Pitch Send 1 -> Lezlie
 // fixed: config 2 Send 1 delay input: offset -99, limit 198 (factory patches use up to 198)
 static const EffectConfigDef kConfigs[] = {
     {"4-sends, 1 reverb", kConfig0, int(std::size(kConfig0))},
