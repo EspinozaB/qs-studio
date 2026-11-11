@@ -103,7 +103,12 @@ public:
         attackL.setText("Attack", juce::dontSendNotification);
         releaseL.setText("Release", juce::dontSendNotification);
         volumeL.setText("Volume", juce::dontSendNotification);
-        proc.onChange = [this] { juce::MessageManager::callAsync([sp = juce::Component::SafePointer<QsPlayerEditor>(this)] { if (sp) sp->refresh(); }); };
+        juce::Component::SafePointer<QsPlayerEditor> safe(this);
+        proc.onChange = [safe] {
+            juce::MessageManager::callAsync([safe] {
+                if (safe != nullptr) safe->refresh();
+            });
+        };
         setResizable(true, true);
         setResizeLimits(520, 400, 1600, 1200);
         setSize(720, 520);
