@@ -363,7 +363,7 @@ LibraryTab::LibraryTab(Session& s) : session(s) {
     act.setMode = [this](bool mix) { setMixView(mix, true); };
     act.showCards = [this] { showBank(kFirstCardBank + cardBankBox.getSelectedItemIndex()); };
     act.refreshDisplay = [this] { updateLcd(); };
-    panel = std::make_unique<FrontPanel>(lcd, session.volume, act);
+    panel = std::make_unique<FrontPanel>(session.volume, act);
     addAndMakeVisible(*panel);
     const char* mainBanks[] = {"User", "Preset 1", "Preset 2", "Preset 3", "GenMIDI", "Card"};
     for (int b = 0; b < 6; ++b) {
@@ -516,27 +516,19 @@ void LibraryTab::selectProgram(int prog) {
 }
 
 void LibraryTab::updateLcd() {
-    if (panel) panel->sync();
-    if (mixView) {
-        // Like the QS6 in Mix mode: "MIX PRESET2 43" over the mix name.
-        const auto mixName = session.library.mixNameOf(session.currentMixBank, session.currentMix);
-        lcd.setLines(mixName.isNotEmpty() ? mixName : "Mix " + juce::String(session.currentMix).paddedLeft('0', 2),
-                     {"MIX " + bankTitle(session.currentMixBank).toUpperCase().removeCharacters(" ") + "  " + juce::String(session.currentMix).paddedLeft('0', 2),
-                      !session.midi.isOpen() ? juce::String("NOT CONNECTED: see Connection")
-                      : session.canSelectMixes() ? "Mixes change on MIDI channel " + juce::String(session.mixSelectChannel())
-                                                 : juce::String("Program Select is not set to a channel")});
-        return;
-    }
-    const auto name = session.library.nameOf(session.currentBank, session.currentProgram);
-    // On the QSR the VALUE knob edits whichever field the cursor is on; mark it with > like a cursor.
-    const auto target = panel ? panel->knobTarget() : FrontPanel::Target::Program;
-    auto field = [&](FrontPanel::Target t, const juce::String& s) { return (target == t && !panel->isQs6() ? ">" : "") + s; };
-    lcd.setLines(name.isNotEmpty() ? name : juce::String("Program ") + juce::String(session.currentProgram).paddedLeft('0', 3),
-                 {field(FrontPanel::Target::Bank, "BANK: " + bankTitle(session.currentBank).toUpperCase()) + "  " +
-                      field(FrontPanel::Target::Program, "PROG " + juce::String(session.currentProgram).paddedLeft('0', 3)) + "  " +
-                      field(FrontPanel::Target::Channel, "CH " + juce::String(session.channel).paddedLeft('0', 2)),
-                  session.midi.isOpen() ? (session.deviceName.isNotEmpty() ? session.deviceName : juce::String("MIDI connected"))
-                                        : juce::String("NOT CONNECTED: see Connection")});
+    if (!panel) return;
+    panel->sync();
+    // What the synth's own display would show (QS6: "PROG PRESET1 00" / "GrandPiano Ch01"; QSR: number, name, "Bank: Preset1").
+    FrontPanel::Display d;
+    d.mix = mixView;
+    const int b = mixView ? session.currentMixBank : session.currentBank;
+    d.number = mixView ? session.currentMix : session.currentProgram;
+    d.name = mixView ? session.library.mixNameOf(b, d.number) : session.library.nameOf(b, d.number);
+    const auto title = bankTitle(b);
+    d.bankQsr = title.removeCharacters(" ");
+    d.bank = title == "GenMIDI" ? title : d.bankQsr.toUpperCase();
+    d.channel = mixView && session.canSelectMixes() ? session.mixSelectChannel() : session.channel;
+    panel->setDisplay(d);
 }
 
 int LibraryTab::selectedProgram() const {

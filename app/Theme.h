@@ -18,13 +18,13 @@ inline void applyStyle(Style s) {
     if (s == Style::QS6) {
         accent = juce::Colour(0xffa6d65c);
         accentDim = juce::Colour(0xff55702f);
-        lcdBg = juce::Colour(0xff9fb85a);
-        lcdInk = juce::Colour(0xff1b2410);
+        lcdBg = juce::Colour(0xffa7c43c);
+        lcdInk = juce::Colour(0xff192408);
     } else {
         accent = juce::Colour(0xff71b7e0);
         accentDim = juce::Colour(0xff335c76);
-        lcdBg = juce::Colour(0xff8ea3ad);
-        lcdInk = juce::Colour(0xff111c24);
+        lcdBg = juce::Colour(0xffc2cf72);
+        lcdInk = juce::Colour(0xff1d2610);
     }
 }
 

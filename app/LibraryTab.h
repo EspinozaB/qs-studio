@@ -57,7 +57,6 @@ private:
     bool suppressSend = false;
     bool mixView = false, askedProgramSelect = false;
 
-    theme::Lcd lcd;
     std::unique_ptr<FrontPanel> panel;
     juce::OwnedArray<juce::TextButton> bankButtons;  // User, Preset 1-3, GenMIDI, Card
     juce::ComboBox cardBankBox;

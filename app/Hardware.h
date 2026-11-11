@@ -7,8 +7,10 @@
 
 namespace hw {
 
-// Printed panel lettering. The QS6 prints its labels in light blue; the QSR in light grey.
-inline juce::Colour silk() { return theme::currentStyle == theme::Style::QS6 ? juce::Colour(0xff8db6dc) : juce::Colour(0xffc8cdd2); }
+// Printed panel lettering (light grey on both the QS6 and the QSR).
+inline juce::Colour silk() { return juce::Colour(0xffd2d5d9); }
+// The QS6 prints the EDIT MODE key legends (VALUE, EDIT SELECT, STORE, PAGE) in light blue.
+inline juce::Colour qs6Blue() { return juce::Colour(0xff6fb6e4); }
 inline juce::Colour panelBlack() { return juce::Colour(0xff151618); }
 
 // A dark recess cut into the panel.
@@ -69,54 +71,45 @@ protected:
     float dragY = 0.0f;
 };
 
-// A pitch or mod wheel: a ribbed rubber drum turning in a slot, with the molded thumb grip that rolls with it.
+// A pitch or mod wheel: a smooth grey rubber drum turning in a slot, with the oval thumb dish that rolls with it.
 class Wheel : public DragControl {
 public:
     Wheel(int lo, int hi, int initial, bool centreDetent) : DragControl(lo, hi, initial), detent(centreDetent) {}
 
     void paint(juce::Graphics& g) override {
         auto r = getLocalBounds().toFloat();
-        drawWell(g, r, 6.0f);
-        auto drum = r.reduced(5.0f, 6.0f);
+        drawWell(g, r, 5.0f);
+        auto drum = r.reduced(4.0f, 5.0f);
         const float cy = drum.getCentreY(), radius = drum.getHeight() * 0.62f;
-        // Drum body: dark at the top and bottom where it curves away, lighter where it faces you.
-        juce::ColourGradient body(juce::Colour(0xff0d0d0e), drum.getX(), drum.getY(), juce::Colour(0xff0d0d0e), drum.getX(), drum.getBottom(), false);
-        body.addColour(0.5, juce::Colour(0xff4a4c50));
-        body.addColour(0.3, juce::Colour(0xff2b2c2f));
-        body.addColour(0.7, juce::Colour(0xff2b2c2f));
+        // Drum: lighter where it faces you, falling off to dark where it curves away into the slot.
+        juce::ColourGradient body(juce::Colour(0xff1c1d1f), drum.getX(), drum.getY(), juce::Colour(0xff1c1d1f), drum.getX(), drum.getBottom(), false);
+        body.addColour(0.15, juce::Colour(0xff55585c));
+        body.addColour(0.5, juce::Colour(0xff8e9196));
+        body.addColour(0.85, juce::Colour(0xff55585c));
         g.setGradientFill(body);
-        g.fillRoundedRectangle(drum, 3.0f);
+        g.fillRoundedRectangle(drum, 4.0f);
         // Angle of the drum: about +-50 degrees over the full travel.
         const float theta = (detent ? (norm() - 0.5f) * 2.0f : (norm() * 2.0f - 1.0f)) * juce::degreesToRadians(-50.0f);
-        // Ribs every 7 degrees around the drum.
-        for (int k = -40; k <= 40; ++k) {
-            const float phi = juce::degreesToRadians(7.0f * k) + theta;
-            if (std::abs(phi) >= juce::MathConstants<float>::halfPi * 0.97f) continue;
-            const float y = cy + radius * std::sin(phi);
-            if (y < drum.getY() + 1 || y > drum.getBottom() - 1) continue;
-            const float facing = std::cos(phi);
-            g.setColour(juce::Colours::black.withAlpha(0.55f * facing));
-            g.drawHorizontalLine(int(y), drum.getX() + 2, drum.getRight() - 2);
-            g.setColour(juce::Colours::white.withAlpha(0.06f * facing));
-            g.drawHorizontalLine(int(y) + 1, drum.getX() + 2, drum.getRight() - 2);
-        }
-        // Thumb grip: an oval dish that foreshortens as it rolls toward the edges.
+        // Thumb dish: an oval hollow that foreshortens as it rolls toward the edges.
         const float facing = std::cos(theta);
-        const float gy = cy + radius * std::sin(theta);
-        const float gh = drum.getWidth() * 1.05f * facing, gw = drum.getWidth() * 0.68f;
-        if (facing > 0.15f) {
-            juce::Rectangle<float> dish(drum.getCentreX() - gw / 2, gy - gh / 2, gw, gh);
-            dish = dish.getIntersection(drum.reduced(1.0f));
-            g.setGradientFill(juce::ColourGradient(juce::Colour(0xff1a1b1d), dish.getX(), dish.getY(), juce::Colour(0xff5a5c61), dish.getX(), dish.getBottom(), false));
+        if (facing > 0.12f) {
+            const float gy = cy + radius * std::sin(theta);
+            const float gh = drum.getHeight() * 0.62f * facing, gw = drum.getWidth() * 0.72f;
+            auto dish = juce::Rectangle<float>(drum.getCentreX() - gw / 2, gy - gh / 2, gw, gh).getIntersection(drum.reduced(1.0f));
+            // Hollow: shaded dark at the top (in shadow) and light at the bottom (catching light).
+            g.setGradientFill(juce::ColourGradient(juce::Colour(0xff4a4d51), dish.getX(), dish.getY(), juce::Colour(0xff9da0a5), dish.getX(),
+                                                   dish.getBottom(), false));
             g.fillEllipse(dish);
-            g.setColour(juce::Colours::black.withAlpha(0.5f));
+            g.setColour(juce::Colour(0xff2a2b2e).withAlpha(0.8f));
             g.drawEllipse(dish, 1.0f);
+            g.setColour(juce::Colours::white.withAlpha(0.18f * facing));
+            g.drawEllipse(dish.reduced(1.5f).translated(0, 0.8f), 0.8f);
         }
-        // Light falling off toward the slot edges.
-        g.setGradientFill(juce::ColourGradient(juce::Colours::black.withAlpha(0.6f), drum.getX(), cy, juce::Colours::transparentBlack, drum.getX() + 7, cy, false));
-        g.fillRect(drum.withWidth(7.0f));
-        g.setGradientFill(juce::ColourGradient(juce::Colours::black.withAlpha(0.6f), drum.getRight(), cy, juce::Colours::transparentBlack, drum.getRight() - 7, cy, false));
-        g.fillRect(drum.withLeft(drum.getRight() - 7.0f));
+        // Soft shadow where the drum meets the slot sides.
+        g.setGradientFill(juce::ColourGradient(juce::Colours::black.withAlpha(0.45f), drum.getX(), cy, juce::Colours::transparentBlack, drum.getX() + 6, cy, false));
+        g.fillRect(drum.withWidth(6.0f));
+        g.setGradientFill(juce::ColourGradient(juce::Colours::black.withAlpha(0.45f), drum.getRight(), cy, juce::Colours::transparentBlack, drum.getRight() - 6, cy, false));
+        g.fillRect(drum.withLeft(drum.getRight() - 6.0f));
         if (detent && value == resetV) {
             g.setColour(theme::accent.withAlpha(0.8f));
             g.fillRect(r.getX() + 1.0f, cy - 1.0f, 3.0f, 2.0f);
@@ -131,43 +124,39 @@ private:
     bool detent;
 };
 
-// A slide fader: a groove with a scale, and a black cap with grip ridges and a white index line.
+// A slide fader as on the QS6: a recessed box with a metal slot and a black cap.
 class Fader : public DragControl {
 public:
     Fader(int lo, int hi, int initial) : DragControl(lo, hi, initial) {}
 
     void paint(juce::Graphics& g) override {
         auto r = getLocalBounds().toFloat();
-        const float capH = juce::jmin(28.0f, r.getHeight() * 0.24f);
-        auto track = r.reduced(0.0f, capH / 2);
-        const float cx = r.getCentreX();
-        // Scale ticks either side of the groove.
-        g.setColour(hw::silk().withAlpha(0.45f));
-        for (int i = 0; i <= 10; ++i) {
-            const float y = track.getBottom() - track.getHeight() * i / 10.0f;
-            const float w = (i % 5 == 0) ? 6.0f : 3.5f;
-            g.drawHorizontalLine(int(y), cx - 9.0f - w, cx - 9.0f);
-            g.drawHorizontalLine(int(y), cx + 9.0f, cx + 9.0f + w);
-        }
-        drawWell(g, juce::Rectangle<float>(cx - 3.0f, track.getY() - 4.0f, 6.0f, track.getHeight() + 8.0f), 3.0f);
+        const float boxW = juce::jmin(r.getWidth() - 4.0f, 30.0f);
+        auto box = r.withSizeKeepingCentre(boxW, r.getHeight());
+        // Recessed box.
+        g.setColour(juce::Colour(0xff2b2c2f));
+        g.fillRoundedRectangle(box, 3.0f);
+        drawWell(g, box.reduced(2.5f), 2.0f);
+        const float capH = juce::jmin(26.0f, box.getHeight() * 0.22f);
+        auto track = box.reduced(0.0f, capH / 2 + 3.0f);
+        const float cx = box.getCentreX();
+        // Metal slot.
+        g.setGradientFill(juce::ColourGradient(juce::Colour(0xff8c8f94), cx - 1.5f, 0, juce::Colour(0xff3d3f43), cx + 1.5f, 0, false));
+        g.fillRect(juce::Rectangle<float>(cx - 1.5f, track.getY() - 2.0f, 3.0f, track.getHeight() + 4.0f));
         // Cap.
         const float y = track.getBottom() - track.getHeight() * norm();
-        const float capW = juce::jmin(r.getWidth() - 4.0f, 30.0f);
-        juce::Rectangle<float> cap(cx - capW / 2, y - capH / 2, capW, capH);
-        g.setColour(juce::Colours::black.withAlpha(0.5f));
-        g.fillRoundedRectangle(cap.translated(0, 2.5f), 3.0f);
-        g.setGradientFill(juce::ColourGradient(juce::Colour(0xff4a4b4f), cap.getX(), cap.getY(), juce::Colour(0xff121214), cap.getX(), cap.getBottom(), false));
-        g.fillRoundedRectangle(cap, 3.0f);
-        g.setColour(juce::Colours::white.withAlpha(0.12f));
-        for (int i = 1; i <= 3; ++i) {
-            g.drawHorizontalLine(int(cap.getY() + cap.getHeight() * i / 8.0f), cap.getX() + 3, cap.getRight() - 3);
-            g.drawHorizontalLine(int(cap.getBottom() - cap.getHeight() * i / 8.0f), cap.getX() + 3, cap.getRight() - 3);
-        }
-        g.setColour(juce::Colours::white.withAlpha(0.9f));
-        g.fillRect(cap.getX() + 2, cap.getCentreY() - 1, cap.getWidth() - 4, 2.0f);
+        juce::Rectangle<float> cap(box.getX() + 4.0f, y - capH / 2, box.getWidth() - 8.0f, capH);
+        g.setColour(juce::Colours::black.withAlpha(0.55f));
+        g.fillRoundedRectangle(cap.translated(0, 2.0f), 2.5f);
+        g.setGradientFill(juce::ColourGradient(juce::Colour(0xff3c3d41), cap.getX(), cap.getY(), juce::Colour(0xff0f0f11), cap.getX(), cap.getBottom(), false));
+        g.fillRoundedRectangle(cap, 2.5f);
+        g.setColour(juce::Colours::white.withAlpha(0.16f));
+        g.drawHorizontalLine(int(cap.getY() + 1), cap.getX() + 2, cap.getRight() - 2);
+        g.setColour(juce::Colours::white.withAlpha(0.35f));
+        g.fillRect(cap.getX() + 3, cap.getCentreY() - 0.5f, cap.getWidth() - 6, 1.0f);
         if (dragging) {
-            juce::Rectangle<float> bubble(cap.getRight() + 3, cap.getCentreY() - 10, 30, 20);
-            if (bubble.getRight() > r.getRight()) bubble.setX(cap.getX() - 33);
+            juce::Rectangle<float> bubble(box.getRight() + 3, cap.getCentreY() - 10, 30, 20);
+            if (bubble.getRight() > r.getRight()) bubble.setX(box.getX() - 33);
             g.setColour(theme::bezel.withAlpha(0.95f));
             g.fillRoundedRectangle(bubble, 4.0f);
             g.setColour(theme::accent);
@@ -220,7 +209,29 @@ protected:
 class Encoder : public juce::Component, public juce::SettableTooltipClient {
 public:
     std::function<void(int)> onStep;
-    void paint(juce::Graphics& g) override { Knob::drawKnob(g, getLocalBounds().toFloat(), angle, true); }
+    void paint(juce::Graphics& g) override { drawDimpleKnob(g, getLocalBounds().toFloat(), angle); }
+
+    // The QSR's VALUE knob: a large black knob with a finger dimple near the edge.
+    static void drawDimpleKnob(juce::Graphics& g, juce::Rectangle<float> area, float angle) {
+        const float d = juce::jmin(area.getWidth(), area.getHeight()) - 4.0f;
+        auto r = area.withSizeKeepingCentre(d, d);
+        const auto c = r.getCentre();
+        g.setColour(juce::Colours::black.withAlpha(0.55f));
+        g.fillEllipse(r.translated(0, 3.0f));
+        g.setGradientFill(juce::ColourGradient(juce::Colour(0xff3a3b3f), r.getX(), r.getY(), juce::Colour(0xff0b0b0c), r.getRight(), r.getBottom(), false));
+        g.fillEllipse(r);
+        g.setColour(juce::Colours::white.withAlpha(0.10f));
+        g.drawEllipse(r.reduced(1.0f), 1.2f);
+        auto top = r.reduced(d * 0.08f);
+        g.setGradientFill(juce::ColourGradient(juce::Colour(0xff2c2d30), top.getX(), top.getY(), juce::Colour(0xff121214), top.getRight(), top.getBottom(), false));
+        g.fillEllipse(top);
+        // Dimple.
+        const auto p = c.getPointOnCircumference(d * 0.30f, angle);
+        juce::Rectangle<float> dimple(p.x - d * 0.11f, p.y - d * 0.11f, d * 0.22f, d * 0.22f);
+        g.setGradientFill(juce::ColourGradient(juce::Colour(0xff050506), dimple.getX(), dimple.getY(), juce::Colour(0xff3a3b3f), dimple.getRight(),
+                                               dimple.getBottom(), false));
+        g.fillEllipse(dimple);
+    }
     void mouseDown(const juce::MouseEvent& e) override { lastY = e.position.y; }
     void mouseDrag(const juce::MouseEvent& e) override {
         const int n = int((lastY - e.position.y) / 12.0f);  // one step per 12 pixels, however fast the drag
@@ -255,7 +266,15 @@ public:
             repaint();
         }
     }
-    bool small = false;  // QSR-style compact button
+    bool small = false;      // QSR-style compact button
+    juce::Colour legend;     // printed lettering; transparent = the panel's silk colour
+    bool split = false;      // one wide key with arrows at both ends (QSR CURSOR, MIDI CH): see side()
+    int side() const { return lastSide; }  // -1 if the left half was pressed, +1 for the right half
+
+    void mouseDown(const juce::MouseEvent& e) override {
+        lastSide = e.position.x < float(getWidth()) / 2.0f ? -1 : 1;
+        juce::Button::mouseDown(e);
+    }
 
     void paintButton(juce::Graphics& g, bool over, bool down) override {
         auto r = getLocalBounds().toFloat().reduced(1.5f);
@@ -273,7 +292,8 @@ public:
         g.fillRoundedRectangle(face, corner);
         g.setColour(lit ? theme::accent : juce::Colours::white.withAlpha(0.10f));
         g.drawRoundedRectangle(face, corner, lit ? 1.5f : 1.0f);
-        const auto ink = isEnabled() ? (lit ? theme::accent.brighter(0.3f) : silk()) : silk().withAlpha(0.3f);
+        const auto base2 = legend.isTransparent() ? silk() : legend;
+        const auto ink = isEnabled() ? (lit ? theme::accent.brighter(0.3f) : base2) : base2.withAlpha(0.3f);
         g.setColour(ink);
         const float h = face.getHeight();
         if (line2.isEmpty()) {
@@ -292,6 +312,7 @@ public:
 private:
     juce::String line1, line2;
     bool lit = false;
+    int lastSide = 1;
 };
 
 }  // namespace hw
