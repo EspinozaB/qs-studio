@@ -9,17 +9,32 @@ Back up both synths before anything that writes to them.
 - [ ] Connection: pick MIDI in/out, Connect. The pill says "Connected to your QS6 (OS ...)". Same for the QSR.
 - [ ] Switching synths: the panel look changes, and `QSStudio.QS6.library` / `QSStudio.QSR.library` both appear in `QS Studio Data`.
 
-## QS6 first (not tested yet)
+## 0.5.0: what's new to test (QS6)
+Turn on **Log MIDI traffic** (Connection page) and attach today's log (**Open the logs**) to anything that misbehaves.
+- [ ] Global > MIDI Program Select is **On** before you start.
+- [ ] **Programs after mixes:** pick a few mixes, switch back to Programs, click programs. The QS6 should change program and
+      stay out of the Global edit page. If it doesn't, the status bar says "The QS didn't switch" and the log has a "Check FAILED" line.
+- [ ] **Read all banks** now also reads each program's effect (a little slower). Afterwards **Its effect** opens a program's effect.
+- [ ] **Mix Editor:** Mixes > pick a User mix > **Edit this mix**. Change volume, pan and a channel's program; hear it.
+      **Edit** on a channel opens that channel's program; change something; hear it inside the mix. **Store to User mix...** to a spare slot.
+- [ ] **Effects Editor:** Get from QS (Program), change the reverb type and decay, hear it. Switch the configuration. Try Mix.
+      Note any parameter that moves the wrong thing on the QS display (the spec has typos; we fixed the ones we found).
+- [ ] **Compare** in the Program Editor: on = the original, off = your edits.
+- [ ] **Bank tools...** on the Programs page: save a bank as .syx; swap two spare User programs; export names to CSV.
+- [ ] **Computer keys:** with nothing in a text box, A W S E D... play notes, Z / X change octave, - / = velocity, Space stops.
+- [ ] **Transfer pace** (Connection page): set Slow if bank reads time out.
+
+## QS6 ROM: answered
+The QS6 answers card reads with the card in its slot (your dump was a 512 KB program card, repeated), not its sample ROM.
+Getting its samples means recording them (Record & Sample) or reading the ROM chips with a programmer.
+
+## QS6 first
 - [ ] **Back up now** (Backup & Restore): "complete backup, all 357 parts". Keep this file safe.
-- [ ] **Built-in ROM check:** Cards & ROM, card slot empty, **Test card reader**. Note what it says.
-  - If it reports the built-in sound ROM: **Dump internal sample ROM** (about 1 hour per 8 MB, resumable). Keep the file private.
-  - If it reports NACK / no card: the QS6 doesn't expose its ROM this way; note it.
 - [ ] Programs: click programs in User and Preset 1-3; the QS6 switches. Group keys (00-120) and 0-9 on the panel work.
 - [ ] Panel: VALUE up/down, BANK left/right, PAGE left/right (MIDI channel), EDIT SELECT opens the editor, STORE.
 - [ ] Strip: pitch wheel bends and springs back, mod wheel, Volume, Controller A.
-- [ ] **Mixes:** MIX (or the Mixes tab), pick a Preset 2 mix. QS Studio asks to set MIDI Program Select to a channel: say yes.
-  - [ ] The QS6 changes mixes, and its LCD matches QS Studio's (Preset 2 mix 43 = "Stik&Pad 2").
-  - [ ] Back in PROGRAM: programs still change with Program Select on a channel. (Not confirmed yet: important.)
+- [ ] **Mixes:** MIX (or the Mixes tab), pick a Preset 2 mix. The QS6 changes mixes, and its LCD matches QS Studio's
+      (Preset 2 mix 43 = "Stik&Pad 2").
 - [ ] **Read Preset 2 mixes from QS**: 100 of 100; afterwards Program Select is back to what it was (Global Settings page).
 - [ ] **Read all banks from QS** (programs): names match the QS6.
 - [ ] Program Editor: Get from QS, move a few knobs and hear it change, Store to a spare User slot.

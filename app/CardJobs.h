@@ -52,6 +52,7 @@ public:
           onDone(std::move(done)) {}
 
     void run() override {
+        MidiLink::JobScope jobScope(midi);
         midi.clearQueue();
         const int total = sectors * 128;
         int start = int(file.getSize() / 1024);
@@ -71,7 +72,7 @@ public:
         }
         int badSums = 0, done = start;
         const auto t0 = juce::Time::getMillisecondCounter();
-        juce::String stopNote;
+        juce::String stopNote, warnNote;
         for (int i = start; i < total && !threadShouldExit(); ++i) {
             const int s = i / 128, b = i % 128;
             BlockResult r;
@@ -92,10 +93,20 @@ public:
             }
             if (i == 0) {
                 block0 = r.data;
+                if (!qs::looksLikeInternalRom(block0) && qs::looksLikeCard(block0)) {
+                    // A QS6 answers card reads with the card in the slot, not its own ROM. Say so and stop.
+                    result = "This isn't the sample ROM. Your QS answered with the card in its slot (a program card), so this unit "
+                             "doesn't hand out its built-in ROM over MIDI. Nothing was saved.\n\n"
+                             "To get its samples, record them as audio (Record & Sample), or read the ROM chips with a programmer.";
+                    out.flush();
+                    out.truncate();
+                    return;
+                }
                 if (!qs::looksLikeInternalRom(block0))
-                    stopNote = "Warning: the first block doesn't look like the internal sample ROM (this unit may be reading a card instead).";
-            } else if (b == 0 && (s == 32 || s == 64) && r.data == block0) {
-                stopNote = "The ROM repeats from " + juce::String(s / 8) + " MB on, so it's " + juce::String(s / 8) + " MB. Stopped there.";
+                    warnNote = "Warning: the first block doesn't look like the internal sample ROM, so this may be a card, not the ROM.";
+            } else if (b == 0 && (s == 4 || s == 8 || s == 16 || s == 32 || s == 64) && r.data == block0) {
+                const juce::String size = s < 8 ? juce::String(s * 128) + " KB" : juce::String(s / 8) + " MB";
+                stopNote = "The data repeats from " + size + " on, so there's only " + size + " here. Stopped there.";
                 break;
             }
             if (r.kind == BlockResult::BadChecksum) ++badSums;
@@ -111,9 +122,10 @@ public:
         }
         out.flush();
         const auto size = file.getSize();
-        const bool finished = !threadShouldExit() && (done >= total || stopNote.startsWith("The QS stopped") || stopNote.startsWith("The ROM repeats"));
+        const bool finished = !threadShouldExit() && (done >= total || stopNote.startsWith("The QS stopped") || stopNote.startsWith("The data repeats"));
         result = (finished ? "Done. " : "Paused. Click Dump again with the same file to resume. ") + juce::String(size / 1024) + " KB saved to " +
                  file.getFullPathName() + (stopNote.isNotEmpty() ? "\n\n" + stopNote : juce::String()) +
+                 (warnNote.isNotEmpty() ? "\n\n" + warnNote : juce::String()) +
                  (badSums ? "\n\nWarning: " + juce::String(badSums) + " blocks still had checksum mismatches after 3 tries." : juce::String());
         if (finished) {
             juce::FileInputStream in(file);
@@ -142,6 +154,7 @@ public:
           onDone(std::move(done)) {}
 
     void run() override {
+        MidiLink::JobScope jobScope(midi);
         midi.clearQueue();
         qs::Bytes image;
         image.reserve(size_t(sectors) * 128 * 1024);
@@ -199,6 +212,7 @@ public:
           onDone(std::move(done)) {}
 
     void run() override {
+        MidiLink::JobScope jobScope(midi);
         const size_t sectorBytes = 128 * 1024;
         image.resize(((image.size() + sectorBytes - 1) / sectorBytes) * sectorBytes, 0xFF);
         const int sectors = int(image.size() / sectorBytes);

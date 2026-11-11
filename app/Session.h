@@ -6,17 +6,18 @@
 #include <array>
 #include <optional>
 
+#include "../core/qs_effects.h"
 #include "../core/qs_factory.h"
+#include "../core/qs_mix.h"
 #include "../core/qs_program.h"
 #include "../core/qs_samples.h"
 #include "MidiLink.h"
 #include "Theme.h"
 
-juce::File settingsDir();      // "QS Studio Data" beside the program: every file QS Studio writes goes here
+// settingsDir() and settings() are declared in Log.h (via MidiLink.h). settingsDir(): "QS Studio Data" beside the program: every file QS Studio writes goes here
 juce::File appFolder();
 bool dataFolderWritable();
 juce::String versionLabel();  // e.g. "0.4.0 pre-alpha"
-juce::PropertiesFile& settings();
 
 struct BankInfo {
     const char* title;
@@ -39,6 +40,8 @@ struct Library {
     };
     std::array<std::array<std::optional<qs::Program>, 128>, kBanks.size()> programs;
     std::array<std::array<std::optional<MixEntry>, 100>, kBanks.size()> mixes;
+    // Each program's effect patch (65 bytes), when known: on the QS a program is stored together with its effect.
+    std::array<std::array<std::optional<qs::Bytes>, 128>, kBanks.size()> effects;
     std::array<juce::String, kBanks.size()> source, mixSource;  // where each bank's data came from
     juce::String model = "QSR";  // file key: QS6, QSR, QS7, QS8, QS6.1 ...
 
@@ -53,6 +56,7 @@ struct Library {
     void clear() {
         for (auto& b : programs) b.fill(std::nullopt);
         for (auto& b : mixes) b.fill(std::nullopt);
+        for (auto& b : effects) b.fill(std::nullopt);
         source.fill({});
         mixSource.fill({});
     }
@@ -80,6 +84,8 @@ struct Library {
                 }
             } else if ((op == qs::NewMixDump || op == qs::OldMixDump) && m.size() > 6 && m[6] < 100) {
                 nm += setMix(bank, m[6], m);
+            } else if (op == qs::UserEffectsDump && m.size() > 6) {
+                if (auto e = qs::Effects::fromDump(m)) effects[size_t(bank)][m[6] & 0x7F] = e->bytes();
             }
         }
         const auto label = sourceText.isNotEmpty() ? sourceText : f.getFileName();
@@ -144,6 +150,17 @@ struct Library {
             if (any) mixRoot->setProperty(kBanks[b].title, arr);
         }
         root->setProperty("_mixes", juce::var(mixRoot.get()));
+        juce::DynamicObject::Ptr fxRoot = new juce::DynamicObject();
+        for (size_t b = 0; b < kBanks.size(); ++b) {
+            juce::Array<juce::var> arr;
+            bool any = false;
+            for (auto& e : effects[b]) {
+                arr.add(e ? juce::var(juce::String::toHexString(e->data(), int(e->size()), 0)) : juce::var());
+                any |= e.has_value();
+            }
+            if (any) fxRoot->setProperty(kBanks[b].title, arr);
+        }
+        root->setProperty("_effects", juce::var(fxRoot.get()));
         juce::DynamicObject::Ptr src = new juce::DynamicObject(), msrc = new juce::DynamicObject();
         for (size_t b = 0; b < kBanks.size(); ++b) {
             src->setProperty(kBanks[b].title, source[b]);
@@ -181,6 +198,9 @@ struct Library {
             if (auto* arr = v["_mixes"][kBanks[b].title].getArray())
                 for (int i = 0; i < juce::jmin(100, arr->size()); ++i)
                     if ((*arr)[i].toString().isNotEmpty()) setMix(int(b), i, hexBytes((*arr)[i]));
+            if (auto* arr = v["_effects"][kBanks[b].title].getArray())
+                for (int i = 0; i < juce::jmin(128, arr->size()); ++i)
+                    if ((*arr)[i].toString().isNotEmpty()) effects[b][size_t(i)] = hexBytes((*arr)[i]);
         }
         if (fromFile != file()) {  // migrated: keep the old file as a backup so it isn't taken over twice
             save();
@@ -275,6 +295,9 @@ struct Session : private juce::MidiKeyboardState::Listener, private juce::MidiIn
 
     // Hooks set by MainComponent so tabs can hand work to each other.
     std::function<void(const qs::Program&, const juce::String& where)> openInEditor;
+    std::function<void(const qs::Mix&, const juce::String& where, int userNumber)> openMixEditor;   // userNumber -1 if not a User mix
+    std::function<void(const qs::Effects&, const juce::String& where, int edit)> openEffectsEditor; // edit: 0 Program, 1 Mix
+    std::function<void(int channel, const juce::String& mixName)> editMixChannelProgram;
     std::function<void(const juce::String&)> setStatus;
     std::function<void(int bank, int program)> currentProgramChanged;
     std::function<void()> channelChanged;
@@ -292,13 +315,33 @@ struct Session : private juce::MidiKeyboardState::Listener, private juce::MidiIn
         settings().saveIfNeeded();
     }
 
-    bool programModeSent = false;  // Program mode is selected once per connection, not on every click
+    // Transfer pace (Connection page): stretches the waits in long reads for slow or flaky MIDI interfaces.
+    static int paced(int ms) {
+        const int pace = settings().getIntValue("transferPace", 0);
+        return ms * (pace == 2 ? 4 : pace == 1 ? 2 : 1);
+    }
 
-    // Select a program on the QS: Program mode (first time), bank select, program change.
+    bool programModeSent = false;  // Program mode is selected once per connection, not on every click
+    int checkToken = 0;
+    bool checkMix = false;
+    juce::String checkExpected, checkWhat;
+    juce::uint32 checkSentAt = 0;
+
+    // Select a program on the QS: Program mode, bank select, program change, then a check that the QS really switched.
     void selectProgram(int bank, int prog) {
         currentBank = bank;
         currentProgram = prog;
-        if (!programModeSent) {
+        qslog::action("Select program: " + juce::String(kBanks[size_t(bank)].title) + " " + juce::String(prog) + " \"" +
+                      library.nameOf(bank, prog) + "\" on channel " + juce::String(channel));
+        if (globalKnown && global.programSelect >= 2) {
+            // On a channel, a QS6 in Program mode ignores program changes (tested). On is the setting that works for
+            // programs, and selectMix sets a channel only for the moment it needs one.
+            qslog::action("Global > Program Select was on channel " + juce::String(global.programSelect - 1) + "; setting it to On");
+            setProgramSelect(1);
+            if (setStatus) setStatus("Program Select on the QS was set to one channel, which stops program changes. QS Studio set it back to On.");
+        }
+        // Program mode on the first selection, and again whenever a parameter edit may have left an edit page showing.
+        if (!programModeSent || midi.editScreenShown) {
             midi.send(qs::modeSelect(0));
             programModeSent = true;
             mixModeSent = false;
@@ -306,6 +349,7 @@ struct Session : private juce::MidiKeyboardState::Listener, private juce::MidiIn
         midi.sendMidi(juce::MidiMessage::controllerEvent(channel, 0, kBanks[size_t(bank)].cc0));
         midi.sendMidi(juce::MidiMessage::programChange(channel, prog));
         if (currentProgramChanged) currentProgramChanged(bank, prog);
+        scheduleCheck(false, bank, prog);
     }
 
     // Mixes can only be picked over MIDI when Global > MIDI Program Select is set to a channel (Ch 1-16): the QS then
@@ -334,8 +378,58 @@ struct Session : private juce::MidiKeyboardState::Listener, private juce::MidiIn
         if (temporary) midi.send(qs::paramEdit(0, 0, 0, 5, 0, 0, ch + 1));  // Program Select = this channel, for this change only
         midi.sendMidi(juce::MidiMessage::controllerEvent(ch, 0, kBanks[size_t(bank)].cc0));
         midi.sendMidi(juce::MidiMessage::programChange(ch, mix));
-        if (temporary) midi.send(qs::paramEdit(0, 0, 0, 5, 0, 0, original));  // and back to the user's setting
+        if (temporary) {
+            midi.send(qs::paramEdit(0, 0, 0, 5, 0, 0, original));  // and back to the user's setting
+            midi.send(qs::modeSelect(1));  // the edit above leaves the Global page on the QS's display; back to Mix play
+        }
+        qslog::action("Select mix: " + juce::String(kBanks[size_t(bank)].title) + " " + juce::String(mix) + " \"" + library.mixNameOf(bank, mix) +
+                      "\" via channel " + juce::String(ch) + (temporary ? " (Program Select set for the change, then restored to " +
+                                                                              juce::String(original) + ")" : juce::String()));
         if (currentProgramChanged) currentProgramChanged(bank, mix);
+        scheduleCheck(true, bank, mix);
+    }
+
+    // ---- Did the QS really switch? A moment after a selection, read its edit buffer and compare the name.
+    // Mismatches go to the status bar and the log, so "QS Studio changed but the synth didn't" shows up in bug reports.
+    void scheduleCheck(bool mix, int bank, int number) {
+        const int token = ++checkToken;
+        checkMix = mix;
+        checkExpected = mix ? library.mixNameOf(bank, number) : library.nameOf(bank, number);
+        checkWhat = juce::String(mix ? "mix " : "program ") + kBanks[size_t(bank)].title + " " + juce::String(number);
+        juce::Timer::callAfterDelay(450, [this, alive = aliveFlag, token] {
+            if (!*alive || token != checkToken || !midi.isOpen() || midi.jobsRunning > 0) return;
+            checkSentAt = juce::Time::getMillisecondCounter();
+            midi.send(checkMix ? qs::mixRequest(100) : qs::editProgramRequest(0));
+        });
+    }
+
+    // Called with every SysEx from the QS (message thread). Returns true if it was the answer to a check.
+    bool checkReply(const qs::Bytes& msg) {
+        if (checkSentAt == 0 || juce::Time::getMillisecondCounter() - checkSentAt > 2500) return false;
+        juce::String got;
+        const int op = qs::opcodeOf(msg);
+        if (!checkMix && op == qs::EditProgramDump) {
+            if (auto p = qs::Program::fromDump(msg)) got = juce::String(p->name()).trimEnd();
+        } else if (checkMix && (op == qs::NewMixDump || op == qs::OldMixDump)) {
+            auto mi = qs::parseMixDump(msg);
+            if (!mi || mi->number != 100) return false;
+            got = juce::String(mi->name).trimEnd();
+        } else {
+            return false;
+        }
+        checkSentAt = 0;
+        const auto expected = checkExpected.trimEnd();
+        if (expected.isEmpty()) {
+            qslog::action("Check: QS is on \"" + got + "\" after selecting " + checkWhat + " (name not in the library to compare)");
+        } else if (got == expected) {
+            qslog::action("Check OK: QS is on \"" + got + "\"");
+        } else {
+            qslog::action("Check FAILED: selected " + checkWhat + " \"" + expected + "\" but the QS is on \"" + got + "\"");
+            if (setStatus)
+                setStatus("The QS didn't switch: it's on \"" + got + "\", not \"" + expected + "\". " +
+                          (checkMix ? "Check that it's in Mix mode." : "Press PROGRAM on the QS, and check Global > MIDI Program Select is On."));
+        }
+        return true;
     }
 
     void allNotesOff() {

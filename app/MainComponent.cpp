@@ -2,7 +2,9 @@
 
 #include "CardJobs.h"
 #include "EditorTab.h"
+#include "EffectsTab.h"
 #include "LibraryTab.h"
+#include "MixTab.h"
 #include "RecorderTab.h"
 
 // ---------- helpers ----------
@@ -76,6 +78,7 @@ static void appendLine(juce::TextEditor& t, const juce::String& s) {
 }
 
 static void info(const juce::String& title, const juce::String& msg) {
+    qslog::action("Message: " + title + ": " + msg.replace("\n", " / "));
     juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, title, msg);
 }
 
@@ -324,18 +327,23 @@ constexpr int kStripH = 176;  // bottom strip: wheels, faders and keyboard
 }  // namespace
 
 MainComponent::MainComponent() {
+    qslog::Writer::get().start(versionLabel());
     auto own = [this](juce::Component* c) {
         owned.emplace_back(c);
         return c;
     };
     library = new LibraryTab(session);
     editor = new EditorTab(session);
+    mixEditor = new MixTab(session);
+    fxEditor = new EffectsTab(session);
+    own(mixEditor);
+    own(fxEditor);
     connection = new ConnectionPage(session);
     globalPage = new GlobalPage(session);
     auto* backup = new BackupPage(session);
     auto* move = new MoveBanksPage(session, *backup, *library);
-    move->goToBackup = [this] { showPage(2); };
-    move->goToPrograms = [this] { showPage(0); };
+    move->goToBackup = [this] { showPageNamed("Backup & Restore"); };
+    move->goToPrograms = [this] { showPageNamed("Programs"); };
     own(move);
     own(library);
     own(editor);
@@ -356,6 +364,18 @@ MainComponent::MainComponent() {
          "- Open a program from the Programs page, or click Get from QS.\n"
          "- Changes aren't kept until you click Store to User (or Save .syx).",
          "Edit programs live", editor},
+        {"Edit", "Mix Editor",
+         "Change the 16 channels of a mix: program, level, pan, effect send, transpose, key range and MIDI switches.",
+         "- Open a mix from the Programs page (Mixes, then Edit this mix), or click Get from QS.\n"
+         "- Edit on a channel opens that channel's program inside the mix.\n"
+         "- Changes aren't kept until you click Store to User mix.",
+         "Edit mixes live", mixEditor},
+        {"Edit", "Effects Editor",
+         "Change an effect patch: its configuration, then the pitch, delay, reverb, lezlie, overdrive, EQ and modulation settings.",
+         "- Pick Program or Mix, then Get from QS.\n"
+         "- Pick the configuration first: the other settings depend on it.\n"
+         "- User effect n belongs to User program n: Store to User... saves it there.",
+         "Edit effects live", fxEditor},
         {"Transfer", "Backup & Restore",
          "Save everything you can change on the synth to one file, or put a saved file back.",
          "- Back up now: saves User programs, mixes, effects and Global settings. Changes nothing on the synth.\n"
@@ -399,12 +419,41 @@ MainComponent::MainComponent() {
 
     session.openInEditor = [this](const qs::Program& p, const juce::String& where) {
         editor->openProgram(p, where);
-        showPage(1);
+        showPageNamed("Program Editor");
     };
-    session.setStatus = [this](const juce::String& s) { statusLabel.setText(s, juce::dontSendNotification); };
+    session.openMixEditor = [this](const qs::Mix& m, const juce::String& where, int number) {
+        mixEditor->openMix(m, where, number);
+        showPageNamed("Mix Editor");
+    };
+    session.openEffectsEditor = [this](const qs::Effects& e, const juce::String& where, int edit) {
+        // An all-zero patch means "not known here": ask the QS for its effect edit buffer.
+        const bool fetch = std::all_of(e.bytes().begin(), e.bytes().end(), [](uint8_t b) { return b == 0; });
+        fxEditor->openEffects(e, where, edit, fetch);
+        showPageNamed("Effects Editor");
+    };
+    // Screenshots without a synth: QS_STUDIO_UI_SYX=<file> fills the mix and effects editors from a .syx.
+    if (auto f = juce::File(juce::SystemStats::getEnvironmentVariable("QS_STUDIO_UI_SYX", {})); f.existsAsFile()) {
+        juce::MemoryBlock mb;
+        f.loadFileAsData(mb);
+        auto ptr = static_cast<const uint8_t*>(mb.getData());
+        bool gotMix = false, gotFx = false;
+        for (auto& m : qs::splitSysex(qs::Bytes(ptr, ptr + mb.getSize()))) {
+            if (auto x = qs::Mix::fromDump(m); x && !gotMix && m[6] == 1) { mixEditor->openMix(*x, f.getFileName(), -1); gotMix = true; }
+            if (auto e = qs::Effects::fromDump(m); e && !gotFx && m[6] == 0) { fxEditor->openEffects(*e, f.getFileName(), 0, false); gotFx = true; }
+        }
+    }
+    session.editMixChannelProgram = [this](int ch, const juce::String& mixName) {
+        editor->openMixChannel(ch, mixName);
+        showPageNamed("Program Editor");
+    };
+    session.setStatus = [this](const juce::String& s) {
+        qslog::action("Status: " + s);
+        statusLabel.setText(s, juce::dontSendNotification);
+    };
     session.channelChanged = [this] { channelBox.setSelectedId(session.channel, juce::dontSendNotification); };
     session.libraryChanged = [this] {
         library->refresh();
+        mixEditor->refreshNames();
         connection->refreshFiles();
     };
     session.midi.addListener(this);
@@ -412,7 +461,7 @@ MainComponent::MainComponent() {
     // ---- top bar
     appTitle.setFont(theme::uiFont(20.0f, true));
     addAndMakeVisible(appTitle);
-    pill.onClick = [this] { showPage(6); };
+    pill.onClick = [this] { showPageNamed("Connection"); };
     pill.setTooltip("Click to open the Connection page");
     addAndMakeVisible(pill);
     lookBox.addItem("Match the synth", 1);
@@ -489,6 +538,13 @@ MainComponent::MainComponent() {
     velSlider.onValueChange = applyVel;
     applyVel();
     notesOffBtn.onClick = [this] { session.allNotesOff(); };
+    keyboard.setWantsKeyboardFocus(false);  // MainComponent plays the computer keys, so the keyboard doesn't do it twice
+    computerKeys.setToggleState(settings().getBoolValue("computerKeys", true), juce::dontSendNotification);
+    computerKeys.setTooltip("Letters A to ' play notes (A = C, W = C#...). Z / X: octave down / up. - / =: velocity. Space: all notes off. "
+                            "Typing in a text box never plays.");
+    computerKeys.onClick = [this] { settings().setValue("computerKeys", computerKeys.getToggleState()); };
+    addAndMakeVisible(computerKeys);
+    setWantsKeyboardFocus(true);
     notesOffBtn.setTooltip("Stops any stuck notes on the QS");
     keysBtn.setClickingTogglesState(true);
     keysBtn.setToggleState(settings().getBoolValue("hideKeys", false), juce::dontSendNotification);
@@ -515,7 +571,7 @@ MainComponent::MainComponent() {
                 "\n\nMove the whole QS Studio folder somewhere you own, such as Documents, the Desktop or a USB stick, and run it from "
                 "there. (Program Files is read-only for normal programs.) Until then nothing you read or change will be kept.");
     connection->connectSaved();
-    showPage(session.midi.isOpen() ? 0 : 6);  // not connected yet: start on Connection
+    showPageNamed(session.midi.isOpen() ? "Programs" : "Connection");  // not connected yet: start on Connection
 }
 
 void MainComponent::fillControllerBox() {
@@ -542,11 +598,20 @@ MainComponent::~MainComponent() {
     for (auto& p : pages) removeChildComponent(p.comp);
 }
 
+int MainComponent::pageIndex(const juce::String& title) const {
+    for (size_t i = 0; i < pages.size(); ++i)
+        if (pages[i].title == title) return int(i);
+    return 0;
+}
+
+void MainComponent::showPageNamed(const juce::String& title) { showPage(pageIndex(title)); }
+
 void MainComponent::showPage(int index) {
     if (index < 0 || index >= int(pages.size())) return;
     if (current >= 0) pages[size_t(current)].comp->setVisible(false);
     current = index;
     auto& p = pages[size_t(index)];
+    qslog::action("Page: " + p.title);
     p.comp->setVisible(true);
     sidebar.setSelected(index);
     header.set(p.title, p.summary, p.help);
@@ -580,7 +645,9 @@ void MainComponent::updatePill() {
 }
 
 void MainComponent::sysexReceived(const qs::Bytes& msg) {
+    if (session.checkReply(msg)) return;
     if (auto d = qs::parseDeviceReply(msg)) {
+        qslog::action("The synth says it is a " + juce::String(d->model) + ", OS " + juce::String(d->version));
         session.deviceName = juce::String(d->model) + " v" + juce::String(d->version);
         settings().setValue("lastModel", juce::String(d->model));
         session.library.switchModel(juce::String(d->model));  // each model keeps its own banks
@@ -595,12 +662,14 @@ void MainComponent::sysexReceived(const qs::Bytes& msg) {
         updatePill();
         resized();
         session.midi.send(qs::globalRequest());  // controller numbers and Program Select
-        if (current == 6) juce::Timer::callAfterDelay(1200, [this] { showPage(0); });  // connected: go play
+        if (current == pageIndex("Connection")) juce::Timer::callAfterDelay(1200, [this] { showPageNamed("Programs"); });  // connected: go play
         return;
     }
     if (auto g = qs::parseGlobalDump(msg)) {
         session.global = *g;
         session.globalKnown = true;
+        qslog::action("Global settings: Program Select = " + juce::String(g->programSelect) + " (0 Off, 1 On, 2-17 channel 1-16), GM " +
+                      (g->generalMidi ? "on" : "off"));
         perf.updateLayout();
         globalPage->refreshFromSession();
         if (g->programSelect == 0)
@@ -650,7 +719,9 @@ void MainComponent::resized() {
     bar.removeFromLeft(4);
     velLabel.setBounds(bar.removeFromLeft(70));
     velSlider.setBounds(bar.removeFromLeft(200));
-    bar.removeFromLeft(16);
+    bar.removeFromLeft(12);
+    computerKeys.setBounds(bar.removeFromLeft(190));
+    bar.removeFromLeft(12);
     statusLabel.setBounds(bar);
     perf.setVisible(!hidden);
     keyboard.setVisible(!hidden);
@@ -671,4 +742,54 @@ void MainComponent::resized() {
     sidebar.setBounds(r.removeFromLeft(230));
     header.setBounds(r.removeFromTop(header.heightFor(r.getWidth())));
     if (current >= 0) pages[size_t(current)].comp->setBounds(r);
+}
+
+// ---------------- computer keyboard ----------------
+
+namespace {
+const char* const kNoteKeys = "awsedftgyhujkolp;'";
+}
+
+bool MainComponent::keyPressed(const juce::KeyPress& k) {
+    if (!computerKeys.getToggleState()) return false;
+    const auto c = juce::CharacterFunctions::toLowerCase(k.getTextCharacter());
+    if (k.getModifiers().isCommandDown() || k.getModifiers().isAltDown()) return false;
+    if (c == 'z' || c == 'x') {
+        keyOctave = juce::jlimit(0, 8, keyOctave + (c == 'x' ? 1 : -1));
+        statusLabel.setText("Computer keys: octave starts at C" + juce::String(keyOctave - 2) + " (note " + juce::String(keyOctave * 12) + ")",
+                            juce::dontSendNotification);
+        return true;
+    }
+    if (c == '-' || c == '=') {
+        velSlider.setValue(juce::jlimit(1.0, 127.0, velSlider.getValue() + (c == '=' ? 5 : -5)));
+        return true;
+    }
+    if (k.getKeyCode() == juce::KeyPress::spaceKey) {
+        session.allNotesOff();
+        heldComputerKeys.clear();
+        return true;
+    }
+    return juce::CharPointer_ASCII(kNoteKeys).indexOf(c) >= 0;  // the note itself is handled in keyStateChanged
+}
+
+bool MainComponent::keyStateChanged(bool) {
+    if (!computerKeys.getToggleState()) return false;
+    bool used = false;
+    const float vel = float(velSlider.getValue()) / 127.0f;
+    for (int i = 0; kNoteKeys[i] != 0; ++i) {
+        const int code = int(kNoteKeys[i]);
+        const bool down = juce::KeyPress::isKeyCurrentlyDown(code);
+        const auto it = heldComputerKeys.find(code);
+        if (down && it == heldComputerKeys.end()) {
+            const int note = juce::jlimit(0, 127, keyOctave * 12 + i);
+            heldComputerKeys[code] = note;
+            session.keys.noteOn(1, note, vel);
+            used = true;
+        } else if (!down && it != heldComputerKeys.end()) {
+            session.keys.noteOff(1, it->second, 0.0f);
+            heldComputerKeys.erase(it);
+            used = true;
+        }
+    }
+    return used;
 }

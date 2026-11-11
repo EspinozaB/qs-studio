@@ -3,6 +3,7 @@
 namespace {
 
 void alert(const juce::String& title, const juce::String& msg) {
+    qslog::action("Message: " + title + ": " + msg.replace("\n", " / "));
     juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, title, msg);
 }
 
@@ -256,8 +257,16 @@ EditorTab::EditorTab(Session& s) : session(s) {
     liveToggle.setToggleState(settings().getBoolValue("liveEdit", true), juce::dontSendNotification);
     liveToggle.setTooltip("Send each change to the QS as you make it");
     liveToggle.onClick = [this] { settings().setValue("liveEdit", liveToggle.getToggleState()); };
-    for (juce::Component* c : std::initializer_list<juce::Component*>{&liveToggle, &getBtn, &sendBtn, &storeBtn, &openBtn, &saveBtn})
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&liveToggle, &getBtn, &sendBtn, &storeBtn, &openBtn, &saveBtn, &fxBtn,
+                                                                    &compareBtn})
         addAndMakeVisible(c);
+    fxBtn.setTooltip("Opens the effect this program is playing through, in the Effects editor.");
+    fxBtn.onClick = [this] {
+        if (session.openEffectsEditor) session.openEffectsEditor(qs::Effects(), juce::String(prog.name()).trimEnd() + " effect", editNumber > 0 ? 1 : 0);
+    };
+    compareBtn.setClickingTogglesState(true);
+    compareBtn.setTooltip("Hear the program as it was before your edits (like the QS's COMPARE key). Click again to go back to your edits.");
+    compareBtn.onClick = [this] { setComparing(compareBtn.getToggleState()); };
     addChildComponent(backBtn);
     getBtn.setTooltip("Loads whatever program the QS is playing right now (its edit buffer).");
     sendBtn.setTooltip("Sends this program to the QS edit buffer so you hear it. Not stored: switching programs on the QS discards it.");
@@ -294,8 +303,21 @@ EditorTab::EditorTab(Session& s) : session(s) {
 
 EditorTab::~EditorTab() { session.midi.removeListener(this); }
 
+void EditorTab::openMixChannel(int ch, const juce::String& mixName) {
+    editNumber = ch + 1;
+    where = "Mix " + mixName + " ch " + juce::String(ch + 1);
+    pending.clear();
+    dumpDirty = false;
+    qslog::action("Program editor: editing the program on mix channel " + juce::String(ch + 1));
+    if (session.midi.isOpen()) requestEditBuffer(200);
+    loadAll();
+}
+
 void EditorTab::openProgram(const qs::Program& p, const juce::String& w) {
+    editNumber = 0;
     prog = p;
+    original = p;
+    setComparing(false);
     where = w;
     pending.clear();
     dumpDirty = false;
@@ -327,7 +349,7 @@ void EditorTab::updateLcd() {
     for (int i = 0; i < qs::kSoundCount; ++i) on += prog.isEnabled(i);
     lcd.setLines(juce::String(prog.name()).trimEnd(),
                  {where.toUpperCase(), "SOUNDS ON: " + juce::String(on) + " OF 4   " + juce::String(qs::romSetName(session.romSet())) + " SAMPLES" +
-                                           (awaitingDump ? juce::String("   WAITING FOR QS...") : juce::String())});
+                                           (awaitingDump ? juce::String("   WAITING FOR QS...") : comparing ? juce::String("   COMPARE: ORIGINAL") : juce::String())});
 }
 
 juce::String EditorTab::soundSummary(int sound) const {
@@ -411,7 +433,7 @@ void EditorTab::timerCallback() {
     const auto now = juce::Time::getMillisecondCounter();
     if (awaitingDump && now >= nextRequestAt) {
         if (requestsSent < 4 && session.midi.isOpen()) {
-            session.midi.send(qs::editProgramRequest(0));
+            session.midi.send(qs::editProgramRequest(editNumber));
             ++requestsSent;
             nextRequestAt = now + 900;
         } else {
@@ -425,10 +447,11 @@ void EditorTab::timerCallback() {
     if (dumpDirty && juce::Time::getMillisecondCounter() - lastDumpEdit > 250) {
         dumpDirty = false;
         pending.clear();  // the full dump carries every change
-        session.midi.send(prog.editDump());
+        session.midi.send(prog.editDump(editNumber));
         return;
     }
-    for (auto& [key, value] : pending) session.midi.send(qs::paramEdit(*key.second, key.first, value));
+    for (auto& [key, value] : pending)
+        session.midi.send(qs::paramEdit(2, key.second->func, key.first, key.second->page, editNumber > 0 ? editNumber - 1 : 0, key.second->pot, value));
     pending.clear();
 }
 
@@ -438,27 +461,42 @@ void EditorTab::flushNow() {
 }
 
 void EditorTab::sysexReceived(const qs::Bytes& msg) {
-    if (!awaitingDump || qs::opcodeOf(msg) != qs::EditProgramDump || msg.size() < 7 || msg[6] != 0) return;
+    if (!awaitingDump || qs::opcodeOf(msg) != qs::EditProgramDump || msg.size() < 7 || msg[6] != editNumber) return;
     if (auto p = qs::Program::fromDump(msg)) {
         awaitingDump = false;
         prog = *p;
+        original = *p;
+        setComparing(false);
         flushNow();
         loadAll();
         if (session.setStatus) session.setStatus("Loaded " + juce::String(prog.name()).trimEnd() + " from the QS edit buffer.");
     }
 }
 
+void EditorTab::setComparing(bool on) {
+    if (on == comparing) return;
+    comparing = on;
+    compareBtn.setToggleState(on, juce::dontSendNotification);
+    if (session.midi.isOpen()) {
+        flushNow();
+        session.midi.send((on ? original : prog).editDump(editNumber));
+    }
+    for (auto* p : panels) p->setEnabled(!on);
+    detailView.setEnabled(!on);
+    updateLcd();
+}
+
 void EditorTab::getFromQs() {
     if (!session.midi.isOpen()) { alert("Not connected", "Connect to the QS on the Connection page first."); return; }
-    where = "QS edit buffer";
+    if (editNumber == 0) where = "QS edit buffer";
     requestEditBuffer(0);
 }
 
 void EditorTab::sendToQs() {
     if (!session.midi.isOpen()) { alert("Not connected", "Connect to the QS on the Connection page first."); return; }
     flushNow();
-    session.midi.send(qs::modeSelect(0));
-    session.midi.send(prog.editDump());
+    session.midi.send(qs::modeSelect(editNumber > 0 ? 1 : 0));
+    session.midi.send(prog.editDump(editNumber));
     if (session.setStatus) session.setStatus("Sent " + juce::String(prog.name()).trimEnd() + " to the QS edit buffer (not stored).");
 }
 
@@ -491,7 +529,7 @@ void EditorTab::saveSyx() {
     chooser->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting, [this](const juce::FileChooser& fc) {
         auto f = fc.getResult();
         if (f == juce::File()) return;
-        const auto d = prog.editDump();
+        const auto d = prog.editDump(0);
         f.replaceWithData(d.data(), d.size());
     });
 }
@@ -600,9 +638,13 @@ void EditorTab::resized() {
     top.removeFromTop(10);
     auto row2 = top.removeFromTop(36);
     for (auto* b : {&getBtn, &sendBtn, &storeBtn, &openBtn, &saveBtn}) {
-        b->setBounds(row2.removeFromLeft(juce::jmin(150, row2.getWidth())));
+        b->setBounds(row2.removeFromLeft(juce::jmin(130, row2.getWidth())));
         row2.removeFromLeft(8);
     }
+    row1.removeFromLeft(10);
+    compareBtn.setBounds(row1.removeFromLeft(100));
+    row1.removeFromLeft(8);
+    fxBtn.setBounds(row1.removeFromLeft(100));
     r.removeFromTop(10);
 
     for (auto* p : panels) p->setVisible(!detailMode);

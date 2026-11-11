@@ -53,6 +53,25 @@ uint32_t getBits(const Bytes& buf, int hiByte, int hiBit, int loByte, int loBit)
     return v;
 }
 
+uint32_t readField(const Bytes& d, int lo, int bits) {
+    uint32_t v = 0;
+    for (int i = 0; i < bits; ++i) {
+        const int b = lo + i;
+        if (size_t(b / 8) < d.size() && ((d[size_t(b / 8)] >> (b % 8)) & 1)) v |= 1u << i;
+    }
+    return v;
+}
+
+void writeField(Bytes& d, int lo, int bits, uint32_t v) {
+    for (int i = 0; i < bits; ++i) {
+        const int b = lo + i;
+        if (size_t(b / 8) >= d.size()) return;
+        auto& byte = d[size_t(b / 8)];
+        if ((v >> i) & 1) byte = uint8_t(byte | (1 << (b % 8)));
+        else byte = uint8_t(byte & ~(1 << (b % 8)));
+    }
+}
+
 std::string decodeName(const Bytes& buf, int startBit, int chars) {
     std::string s;
     for (int k = 0; k < chars; ++k) {

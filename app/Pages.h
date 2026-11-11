@@ -33,7 +33,11 @@ private:
     juce::TextButton refreshBtn{"Refresh list"}, connectBtn{"Connect"}, identifyBtn{"Ask the QS what it is"};
     juce::TextEditor logBox;
     Section filesSec{"Your files", ""};
-    juce::TextButton openFolderBtn{"Open the folder"}, exportLibBtn{"Export a library..."}, importLibBtn{"Import a library..."};
+    juce::TextButton openFolderBtn{"Open the folder"}, exportLibBtn{"Export a library..."}, importLibBtn{"Import a library..."},
+        openLogsBtn{"Open the logs"};
+    juce::ToggleButton logTraffic{"Log MIDI traffic"};
+    juce::ComboBox paceBox;
+    juce::Label paceLabel{{}, "Transfer pace"};
     std::unique_ptr<juce::FileChooser> chooser;
     void updateFilesText();
 public:

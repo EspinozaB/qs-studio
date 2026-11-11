@@ -111,7 +111,7 @@ static Bytes dump(uint8_t op, int number, const Bytes& data) {
     return m;  // 408 bytes
 }
 
-Bytes Program::editDump() const { return dump(EditProgramDump, 0, data); }
+Bytes Program::editDump(int edit) const { return dump(EditProgramDump, edit, data); }
 Bytes Program::userDump(int n) const { return dump(UserProgramDump, n, data); }
 
 Bytes paramEdit(int mode, int func, int sound, int page, int channel, int pot, int value) {

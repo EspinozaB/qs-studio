@@ -39,6 +39,9 @@ Bytes unpack7(const uint8_t* data, size_t n, size_t outBytes);
 
 // Generic bitfield read using the spec's "hiByte:hiBit-loByte:loBit" addressing.
 uint32_t getBits(const Bytes& buf, int hiByte, int hiBit, int loByte, int loBit);
+// Little-endian bit fields by absolute bit position (bit 0 = byte 0 bit 0), as used by the parameter tables.
+uint32_t readField(const Bytes& d, int lowBit, int bits);
+void writeField(Bytes& d, int lowBit, int bits, uint32_t value);
 // 10-character QS name stored as 7-bit chars (value + 32) starting at a bit offset.
 std::string decodeName(const Bytes& buf, int startBit, int chars = 10);
 

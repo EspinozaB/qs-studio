@@ -65,6 +65,8 @@ public:
     void resized() override;
 
     void openProgram(const qs::Program& p, const juce::String& where);
+    // Edit the program a mix channel plays, in the QS's mix channel edit buffer (opcode 02/03 edit# 1-16).
+    void openMixChannel(int channel, const juce::String& mixName);
     void showDetail(int sound, const juce::String& section, int drum = 0);
     void showOverview();
     juce::String soundSummary(int sound) const;  // "Tympani (Percussion)   C-2 to G8   Poly"
@@ -89,6 +91,7 @@ private:
 
     Session& session;
     qs::Program prog;
+    int editNumber = 0;  // 0 = Program mode edit buffer, 1-16 = Mix channel 1-16
     juce::String where = "No program loaded";
     bool awaitingDump = false;
     int requestsSent = 0;
@@ -104,7 +107,10 @@ private:
     juce::TextEditor nameEdit;
     juce::ToggleButton liveToggle{"Live edit"};
     juce::TextButton getBtn{"Get from QS"}, sendBtn{"Send to QS"}, storeBtn{"Store to User..."}, openBtn{"Open .syx"},
-        saveBtn{"Save .syx"}, backBtn{"< All sounds"};
+        saveBtn{"Save .syx"}, backBtn{"< All sounds"}, fxBtn{"Effect..."}, compareBtn{"Compare"};
+    qs::Program original;  // as opened or received, for Compare
+    bool comparing = false;
+    void setComparing(bool on);
     juce::OwnedArray<SoundPanel> panels;
 
     // Detail page

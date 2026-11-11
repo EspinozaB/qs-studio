@@ -5,6 +5,7 @@
 namespace {
 
 void alert(const juce::String& title, const juce::String& msg) {
+    qslog::action("Message: " + title + ": " + msg.replace("\n", " / "));
     juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, title, msg);
 }
 
@@ -26,6 +27,7 @@ public:
     BackupJob(Session& s, juce::File f, std::function<void(bool, juce::String, std::vector<qs::Bytes>)> done)
         : ThreadWithProgressWindow("Backing up the QS", true, true), session(s), file(f), onDone(std::move(done)) {}
     void run() override {
+        MidiLink::JobScope jobScope(session.midi);
         auto& midi = session.midi;
         midi.clearQueue();
         midi.send(qs::allDumpRequest());
@@ -73,6 +75,7 @@ public:
     SendJob(Session& s, std::vector<qs::Bytes> m, juce::String title, std::function<void(bool)> done)
         : ThreadWithProgressWindow(title, true, true), session(s), msgs(std::move(m)), onDone(std::move(done)) {}
     void run() override {
+        MidiLink::JobScope jobScope(session.midi);
         for (size_t i = 0; i < msgs.size() && !threadShouldExit(); ++i) {
             session.midi.send(msgs[i]);
             setProgress(double(i + 1) / double(msgs.size()));
@@ -129,8 +132,33 @@ ConnectionPage::ConnectionPage(Session& s) : session(s) {
     refreshDevices();
 
     addAndMakeVisible(filesSec);
-    for (auto* b : {&openFolderBtn, &exportLibBtn, &importLibBtn}) addAndMakeVisible(b);
+    for (juce::Component* b : std::initializer_list<juce::Component*>{&openFolderBtn, &exportLibBtn, &importLibBtn, &openLogsBtn, &logTraffic})
+        addAndMakeVisible(b);
     openFolderBtn.onClick = [] { settingsDir().startAsProcess(); };
+    openLogsBtn.onClick = [] {
+        auto dir = qslog::Writer::get().folder();
+        dir.createDirectory();
+        dir.startAsProcess();
+    };
+    openLogsBtn.setTooltip("Today's log is session-<date>.txt. Attach it to a bug report: it shows what you clicked, what QS Studio sent "
+                           "and what the synth answered.");
+    logTraffic.setToggleState(qslog::Writer::get().traffic(), juce::dontSendNotification);
+    logTraffic.setTooltip("Writes every message to and from the QS (not notes) into the log. Clicks, messages and problems are always logged.");
+    logTraffic.onClick = [this] { qslog::Writer::get().setTraffic(logTraffic.getToggleState()); };
+    paceBox.addItem("Normal", 1);
+    paceBox.addItem("Slow (2x waits)", 2);
+    paceBox.addItem("Very slow (4x waits)", 3);
+    paceBox.setSelectedId(settings().getIntValue("transferPace", 0) + 1, juce::dontSendNotification);
+    paceBox.setTooltip("If bank reads time out or stop part way (some USB MIDI interfaces drop long SysEx), pick Slow: "
+                       "QS Studio waits longer for each answer and between messages.");
+    paceBox.onChange = [this] {
+        settings().setValue("transferPace", paceBox.getSelectedId() - 1);
+        settings().saveIfNeeded();
+        qslog::action("Transfer pace: " + paceBox.getText());
+    };
+    paceLabel.setColour(juce::Label::textColourId, theme::dim);
+    addAndMakeVisible(paceBox);
+    addAndMakeVisible(paceLabel);
     exportLibBtn.setTooltip("Saves a copy of this model's library (names and programs read from your synth) to share or keep.");
     importLibBtn.setTooltip("Replaces this model's library with one you exported, or one someone shared with you.");
     exportLibBtn.onClick = [this] {
@@ -170,7 +198,8 @@ void ConnectionPage::updateFilesText() {
                     "This copy uses: " + settingsDir().getFullPathName() + "\n"
                     "- QSStudio.<model>.library: names, programs and mixes read from each synth (one file per model, so your QS6 "
                     "and QSR don't overwrite each other). This one is QSStudio." + session.library.model + ".library.\n"
-                    "- Backups: the backups you make.  - QSStudio.settings: ports, look and other choices.";
+                    "- Backups: the backups you make.  - QSStudio.settings: ports, look and other choices.\n"
+                    "- Logs: a log per day of what you did and what went to and from the QS, for bug reports. Kept 30 days.";
     resized();
     repaint();
 }
@@ -203,6 +232,7 @@ void ConnectionPage::connect() {
         alert("MIDI", err);
         return;
     }
+    qslog::action("Connected to MIDI in \"" + inBox.getText() + "\", out \"" + outBox.getText() + "\"");
     settings().setValue("midiIn", inBox.getText());
     settings().setValue("midiOut", outBox.getText());
     settings().saveIfNeeded();
@@ -252,6 +282,8 @@ void ConnectionPage::resized() {
     row.removeFromLeft(10);
     identifyBtn.setBounds(row.removeFromLeft(200));
     row.removeFromLeft(16);
+    paceBox.setBounds(row.removeFromRight(190));
+    paceLabel.setBounds(row.removeFromRight(100));
     status.setBounds(row);
     r.removeFromTop(12);
     const int filesH = filesSec.heightFor(r.getWidth(), 40);
@@ -262,6 +294,10 @@ void ConnectionPage::resized() {
     exportLibBtn.setBounds(fb.removeFromLeft(180));
     fb.removeFromLeft(10);
     importLibBtn.setBounds(fb.removeFromLeft(180));
+    fb.removeFromLeft(10);
+    openLogsBtn.setBounds(fb.removeFromLeft(150));
+    fb.removeFromLeft(14);
+    logTraffic.setBounds(fb.removeFromLeft(170));
     r.removeFromBottom(12);
     logBox.setBounds(r);
 }

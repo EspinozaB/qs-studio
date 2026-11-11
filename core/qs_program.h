@@ -53,7 +53,7 @@ public:
     int editLimit(int sound, const ParamDef& p, int drum = 0) const;
     void setValue(int sound, const ParamDef& p, int value, int drum = 0);
 
-    Bytes editDump() const;              // opcode 02, edit buffer 0 (Program mode)
+    Bytes editDump(int edit = 0) const;  // opcode 02: edit buffer 0 (Program mode) or 1-16 (Mix channel 1-16)
     Bytes userDump(int programNumber) const;  // opcode 00: writes a User program on the QS
 
     const Bytes& bytes() const { return data; }

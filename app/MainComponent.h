@@ -1,6 +1,8 @@
 #pragma once
 #include <JuceHeader.h>
 
+#include <map>
+
 #include "../core/qs_card.h"
 #include "MidiLink.h"
 #include "Session.h"
@@ -11,6 +13,8 @@
 
 class LibraryTab;
 class EditorTab;
+class MixTab;
+class EffectsTab;
 
 // Shared helpers
 juce::String hex(const qs::Bytes& b, size_t maxBytes = 32);
@@ -60,6 +64,8 @@ public:
 private:
     void sysexReceived(const qs::Bytes& msg) override;
     void showPage(int index);
+    void showPageNamed(const juce::String& title);
+    int pageIndex(const juce::String& title) const;
     void applyLook();  // panel colours from the look setting or the connected model
     void updatePill();
     void fillControllerBox();
@@ -72,6 +78,8 @@ private:
     int current = -1;
     LibraryTab* library = nullptr;
     EditorTab* editor = nullptr;
+    MixTab* mixEditor = nullptr;
+    EffectsTab* fxEditor = nullptr;
     ConnectionPage* connection = nullptr;
     GlobalPage* globalPage = nullptr;
 
@@ -87,5 +95,13 @@ private:
     juce::Label velLabel{{}, "Velocity"}, statusLabel;
     juce::Slider velSlider{juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight};
     juce::TextButton notesOffBtn{"All notes off"}, keysBtn{"Hide keyboard"};
+    juce::ToggleButton computerKeys{"Play from computer keys"};
     juce::TooltipWindow tooltips{this, 600};
+
+    // Computer keyboard as a piano (QS SoundEditor had this): A W S E D F T G Y H U J K O L P ; ' play notes,
+    // Z / X shift the octave, - / = change the velocity, Space stops all notes.
+    bool keyPressed(const juce::KeyPress& k) override;
+    bool keyStateChanged(bool isKeyDown) override;
+    int keyOctave = 4;
+    std::map<int, int> heldComputerKeys;  // key code -> note
 };

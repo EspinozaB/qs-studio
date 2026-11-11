@@ -18,30 +18,39 @@ programs apart.
   (the QS SoundEditor "External Keyboard" feature, for the QSR).
 - Recording and auto-sampling.
 
-## Gaps to close (in the order we plan to do them)
+## Gaps closed in 0.5.0
 
-1. **Mix editor.** All 16 channels: program, bank, level, pan, output, effect bus and send, key range, transpose, the
-   MIDI switches. It works on the mix edit buffer, then stores to a User mix. (MIDI Quest: Mix, Mix.Mem.)
-2. **Edit a channel's program from inside a mix.** (MIDI Quest: Patch.1-16.mix.)
-3. **Effects editor.** Program effects and mix effects: configuration and every reverb, delay, chorus, Lezlie, overdrive
-   and EQ parameter. (MIDI Quest: FX.Pgm, FX.Mix.)
-4. **Effects banks.** Read and write all 128 program effects. (MIDI Quest: FX.Bnk.)
-5. **A program together with its effects.** Copy, store and save them as a pair, so a program never lands with the wrong
-   effect. This also covers card banks 1-8. (MIDI Quest: PatchFX, PatchFX.Cd1-8.)
-6. **Bank librarian moves.** Drag to reorder, swap two slots, copy between banks, send a whole bank to User in one go,
-   and save a bank or a set of mixes as its own .syx. (MIDI Quest: Patch.Bnk, Mix.Bnk.)
-7. **Compare.** Hear the stored program against the edited one, like the COMPARE key.
-8. **Play from the computer keyboard.** Letter rows play notes, number keys pick octaves, plus and minus set velocity,
-   and keys 1-9 can be set to fixed notes for drums. (QS SoundEditor help.)
-9. **Slower transfers on request.** A setting that spaces out big bank requests for slow interfaces, on top of the
-   retries we already do. (QS SoundEditor help, "Trouble Shooting".)
-10. **Name lists.** Export any bank or mix list as text or CSV for printing.
-11. **Search across everything saved.** Every library and backup, not just the open one. (MIDI Quest's database.)
-12. **Drum pad monitor.** Shows each incoming note and velocity, for setting up an e-drum kit with the QS.
-    (QS SoundEditor's Drum Kit Calibration.) Low priority.
+1. Mix editor: all 16 channels (program, bank, level, pan, output, effect level and bus, octave, semitone, key range, MIDI and
+   controller switches), the mix's effects channel, live edits, Store to User mix. (MIDI Quest: Mix, Mix.Mem.)
+2. A channel's program edited inside the mix, in the QS's per-channel edit buffer. (MIDI Quest: Patch.1-16.mix.)
+3. Effects editor: all five configurations with every parameter the spec lists, shown per effect type, for the program and the mix.
+   (MIDI Quest: FX.Pgm, FX.Mix.)
+4. Effects banks: reading a bank now reads every program's effect too; effects are kept in the library and saved with banks.
+   (MIDI Quest: FX.Bnk.)
+5. Programs and effects stay together: Copy to a User slot, swap, copy, send a bank and save a bank all carry the effect when
+   it's known. (MIDI Quest: PatchFX.)
+6. Bank tools: save a bank (programs, effects, mixes) as .syx, send a whole bank to the User bank, swap or copy User programs.
+   (MIDI Quest: Patch.Bnk, Mix.Bnk.)
+7. Compare in the Program Editor.
+8. Play from the computer keyboard, with octave and velocity keys. (QS SoundEditor.)
+9. Transfer pace setting for slow interfaces. (QS SoundEditor "Trouble Shooting".)
+10. Name lists exported as CSV.
+11. Session logs with MIDI traffic, for bug reports.
 
-Still to confirm: QS SoundEditor Pro's full PDF help may list more, such as random or blended programs. We'll add
-anything it shows.
+## Still open
+
+- Search across every saved library and backup (MIDI Quest's database).
+- Drum pad monitor for e-drum setups (QS SoundEditor's Drum Kit Calibration). Low priority.
+- Drag to reorder in the list (swap and copy cover it for now).
+- Effect input sources and modulation destinations by name: the manual doesn't give their order, so they show as numbers until
+  checked on a QS.
+- QS SoundEditor Pro's full PDF help may list more. We'll add anything it shows.
+
+## QS6 samples
+
+The QS6 doesn't hand out its sample ROM over MIDI: card reads return the card in its slot (tested: a 512 KB program card came
+back, repeated). Its samples can be recorded through the audio outputs (Record & Sample), or read from the ROM chips with a
+programmer. Recorded samples are the starting point for the card builder below.
 
 ## After that: Sound Bridge territory
 

@@ -6,6 +6,8 @@
 #include <iterator>
 
 #include "../core/qs_card.h"
+#include "../core/qs_effects.h"
+#include "../core/qs_mix.h"
 #include "../core/qs_program.h"
 #include "../core/qs_samples.h"
 #include "../core/qs_sysex.h"
@@ -124,6 +126,41 @@ int main(int argc, char** argv) {
                         last = mi->name;
                     }
                 std::printf("    mixes parsed: %d ('%s' ... '%s')\n", mixes, first.c_str(), last.c_str());
+                // Mix editor model: round trip, names, and every enabled channel within the spec's limits.
+                int mixOk = 0, outOfRange = 0;
+                for (auto& m : msgs)
+                    if (auto mx = qs::Mix::fromDump(m)) {
+                        mixOk += mx->dump(m[6]) == m && mx->name() == qs::parseMixDump(m)->name;
+                        for (int ch = 0; ch < qs::kMixChannels; ++ch)
+                            if (mx->enabled(ch))
+                                for (int i = 0; i < qs::mixChannelParamCount(); ++i)
+                                    outOfRange += mx->channel(ch, qs::mixChannelParam(i)) > qs::mixChannelParam(i).limit;
+                        auto edited = *mx;
+                        edited.setName("Test Mix");
+                        edited.setChannel(3, qs::mixChannelParam(qs::findMixChannelParam("Volume")), 42);
+                        CHECK(edited.name() == "Test Mix  " && edited.channel(3, qs::mixChannelParam(qs::findMixChannelParam("Volume"))) == 42);
+                        CHECK(edited.program(3) == mx->program(3) && edited.channel(2, qs::mixChannelParam(3)) == mx->channel(2, qs::mixChannelParam(3)));
+                    }
+                std::printf("    mix model: %d of %d round-trip, %d enabled-channel values over the limit\n", mixOk, mixes, outOfRange);
+                CHECK(mixOk == mixes && outOfRange == 0);
+                // Effects model: round trip, and every visible parameter within its limit.
+                int fxCount = 0, fxOk = 0, fxOver = 0;
+                for (auto& m : msgs)
+                    if (auto e = qs::Effects::fromDump(m)) {
+                        ++fxCount;
+                        fxOk += e->userDump(m[6]) == m;
+                        const int c = e->config();
+                        const auto& cfg = qs::effectConfig(c);
+                        for (int i = 0; i < cfg.count; ++i)
+                            if (e->visible(c, i) && e->raw(cfg.params[i]) > cfg.params[i].limit && std::string(cfg.params[i].name).find("horn") == std::string::npos) {
+                                ++fxOver;
+                                std::printf("      over: config %d %s = %d\n", c, cfg.params[i].name, e->raw(cfg.params[i]));
+                            }
+                    }
+                std::printf("    effects model: %d of %d round-trip, %d visible values over the limit\n", fxOk, fxCount, fxOver);
+                CHECK(fxOk == fxCount && fxOver == 0);
+                auto pe = qs::mixParamEdit(qs::mixChannelParam(qs::findMixChannelParam("Pan")), 4, 3);
+                CHECK(pe.size() == 11 && pe[6] == ((1 << 5) | 1) && pe[8] == ((4 << 3) | (1 << 1)) && pe[9] == 3);
                 CHECK(mixes == 100);
                 auto rq = qs::mixRequest(100);
                 CHECK(rq.size() == 8 && rq[5] == 0x0F && rq[6] == 100);

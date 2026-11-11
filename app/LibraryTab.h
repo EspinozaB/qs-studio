@@ -48,6 +48,13 @@ private:
     void importFolder();
     void importFolderWithMap(const juce::File& dir, const juce::StringPairArray& map);
     void openInEditor(int prog);
+    void openMixInEditor(int mix);
+    void openEffectOf(int prog);
+    void showBankTools();
+    void saveBankAsSyx();
+    void sendBankToUser();
+    void swapOrCopy();
+    void exportNames();
     void sendCachedToEditBuffer();
     void storeToUser();
     void startCardCopy(std::vector<qs::Bytes> msgs, std::array<std::optional<qs::Program>, 128> expected, juce::String label, int cardBank);
@@ -71,7 +78,8 @@ private:
     juce::TextButton prevBtn{"<"}, nextBtn{">"}, readBtn{"Read this bank from QS"}, readAllBtn{"Read all banks from QS"},
         importFolderBtn{"Import a folder of .syx banks..."}, importOneBtn{"Import a .syx into this bank..."}, editBtn{"Open in editor"},
         sendBtn{"Audition (send to QS, don't store)"}, storeBtn{"Store to User..."}, copyToCardBtn{"Copy a bank onto this card bank..."},
-        convertBtn{"Convert a bank file QS6 <-> QSR..."}, progViewBtn{"Programs"}, mixViewBtn{"Mixes"}, cardCheckBtn{"Check for a card"};
+        convertBtn{"Convert a bank file QS6 <-> QSR..."}, progViewBtn{"Programs"}, mixViewBtn{"Mixes"}, cardCheckBtn{"Check for a card"},
+        fxBtn{"Its effect"}, toolsBtn{"Bank tools..."};
     juce::ToggleButton cardAnyway{"Use card banks without a card check"};
     juce::Label loadNote;
     juce::HyperlinkButton factoryLink{"Get the Alesis factory banks (.syx)",

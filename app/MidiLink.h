@@ -7,6 +7,7 @@
 #include <functional>
 
 #include "../core/qs_sysex.h"
+#include "Log.h"
 
 class MidiLink : private juce::MidiInputCallback {
 public:
@@ -46,14 +47,31 @@ public:
 
     void send(const qs::Bytes& m) {
         if (m.size() < 2 || m.front() != 0xF0 || m.back() != 0xF7) return;
+        const int op = qs::opcodeOf(m);
+        if (op == qs::ParamEdit) editScreenShown = true;  // the QS jumps to the edited parameter's page (spec, opcode 10)
+        if (op == qs::ModeSelect) editScreenShown = false;
         sendMidi(juce::MidiMessage::createSysExMessage(m.data() + 1, int(m.size()) - 2));
     }
 
     // Notes, controllers, program changes. Safe from any thread.
     void sendMidi(const juce::MidiMessage& m) {
         const juce::ScopedLock sl(outLock);
-        if (output != nullptr) output->sendMessageNow(m);
+        if (output == nullptr) return;
+        if (!m.isNoteOnOrOff() && !m.isActiveSense()) qslog::midiOut(m);
+        output->sendMessageNow(m);
     }
+
+    // True after a parameter edit until the next mode select: the QS may still be showing an edit page,
+    // where it doesn't act on program changes the way it does in play mode.
+    std::atomic<bool> editScreenShown{false};
+
+    // Held by a request/response job while it runs, so background checks don't put extra replies in its way.
+    std::atomic<int> jobsRunning{0};
+    struct JobScope {
+        explicit JobScope(MidiLink& l) : link(l) { ++link.jobsRunning; }
+        ~JobScope() { --link.jobsRunning; }
+        MidiLink& link;
+    };
 
     // Seconds needed on a 31.25 kbaud MIDI wire for n bytes (10 bits per byte).
     static double wireSeconds(size_t n) { return double(n) * 10.0 / 31250.0; }
@@ -86,7 +104,11 @@ private:
     }
 
     void handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMessage& m) override {
-        if (!m.isSysEx()) return;
+        if (!m.isSysEx()) {
+            if (m.isProgramChange() || m.isController()) qslog::midiIn(m);  // the QS's own panel changes, useful in a bug report
+            return;
+        }
+        qslog::midiIn(m);
         qs::Bytes b;
         b.reserve(size_t(m.getSysExDataSize()) + 2);
         b.push_back(0xF0);

@@ -85,6 +85,7 @@ public:
     juce::CriticalSection textLock;
 
     void run() override {
+        MidiLink::JobScope jobScope(session.midi);
         const int notes = (job.high - job.low) / job.step + 1;
         total = notes * job.velocities.size();
         for (int vel : job.velocities)

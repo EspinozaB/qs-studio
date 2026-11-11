@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(QSStudio VERSION 0.4.3 LANGUAGES C CXX)
+project(QSStudio VERSION 0.5.0 LANGUAGES C CXX)
 # Release stage shown with the version: pre-alpha, alpha, beta, rc.1 ... and "" for a final release. See README "Versions".
 set(QS_STAGE "pre-alpha")
 
@@ -9,7 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 # Core library: no JUCE, testable anywhere.
-add_library(qscore STATIC core/qs_sysex.cpp core/qs_card.cpp core/qs_program.cpp core/qs_samples.cpp core/qs_factory.cpp)
+add_library(qscore STATIC core/qs_sysex.cpp core/qs_card.cpp core/qs_program.cpp core/qs_samples.cpp core/qs_factory.cpp core/qs_mix.cpp core/qs_effects.cpp)
 target_include_directories(qscore PUBLIC core)
 
 add_executable(core_tests tests/core_tests.cpp)
@@ -30,7 +30,7 @@ if(QS_BUILD_APP)
         ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.png"
         VERSION ${PROJECT_VERSION})
     juce_generate_juce_header(QSStudio)
-    target_sources(QSStudio PRIVATE app/Main.cpp app/MainComponent.cpp app/LibraryTab.cpp app/EditorTab.cpp app/RecorderTab.cpp app/Pages.cpp)
+    target_sources(QSStudio PRIVATE app/Main.cpp app/MainComponent.cpp app/LibraryTab.cpp app/EditorTab.cpp app/RecorderTab.cpp app/Pages.cpp app/MixTab.cpp app/EffectsTab.cpp)
     target_compile_definitions(QSStudio PRIVATE
         JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
         JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:QSStudio,JUCE_PRODUCT_NAME>"

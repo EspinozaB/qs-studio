@@ -5,6 +5,7 @@
 namespace {
 
 void alert(const juce::String& title, const juce::String& msg) {
+    qslog::action("Message: " + title + ": " + msg.replace("\n", " / "));
     juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, title, msg);
 }
 
@@ -29,6 +30,7 @@ public:
     CardProbeJob(Session& s, std::function<void(int)> done)  // 1 = card, 0 = none, -1 = no answer
         : ThreadWithProgressWindow("Looking for a card in the QS", false, false), session(s), onDone(std::move(done)) {}
     void run() override {
+        MidiLink::JobScope jobScope(session.midi);
         auto& midi = session.midi;
         if (!session.programModeSent) {
             midi.send(qs::modeSelect(0));
@@ -170,6 +172,7 @@ public:
         : ThreadWithProgressWindow("Reading from the QS", true, true), session(s), banks(std::move(b)), onDone(std::move(done)) {}
 
     void run() override {
+        MidiLink::JobScope jobScope(session.midi);
         auto& midi = session.midi;
         const int total = int(banks.size()) * 128;
         int doneCount = 0;
@@ -196,13 +199,21 @@ public:
                     for (int attempt = 0; attempt < 3 && !prog && !threadShouldExit(); ++attempt) {
                         midi.send({0xF0, 0x00, 0x00, 0x0E, 0x0E, qs::UserProgramRequest, uint8_t(p), 0xF7});
                         if (auto r = midi.waitFor([p](const qs::Bytes& m) { return qs::opcodeOf(m) == qs::UserProgramDump && m.size() > 6 && m[6] == p; },
-                                                  1500, this))
+                                                  Session::paced(1500), this))
                             prog = qs::Program::fromDump(*r);
                     }
+                    // Its effect (opcode 07): a User program and its effect share the number.
+                    if (prog) {
+                        midi.send(qs::effectsRequest(p));
+                        if (auto r = midi.waitFor([p](const qs::Bytes& m) { return qs::opcodeOf(m) == qs::UserEffectsDump && m.size() > 6 && m[6] == p; },
+                                                  Session::paced(1000), this))
+                            if (auto e = qs::Effects::fromDump(*r)) fx[bank][size_t(p)] = e->bytes();
+                    }
+                    if (Session::paced(1) > 1) wait(Session::paced(10));
                 } else {
                     midi.sendMidi(juce::MidiMessage::controllerEvent(session.channel, 0, kBanks[size_t(bank)].cc0));
                     midi.sendMidi(juce::MidiMessage::programChange(session.channel, p));
-                    wait(60);
+                    wait(Session::paced(60));
                     for (int attempt = 0; attempt < 4 && !threadShouldExit(); ++attempt) {
                         midi.clearQueue();
                         midi.send(qs::editProgramRequest(0));
@@ -212,12 +223,18 @@ public:
                         // Still the previous program? The QS hadn't switched yet: wait and ask again.
                         if (prog && prev && prog->bytes() == prev->bytes() && attempt < 3) {
                             ++retries;
-                            wait(150 + 100 * attempt);
+                            wait(Session::paced(150 + 100 * attempt));
                             continue;
                         }
                         break;
                     }
                     if (prog && prev && prog->bytes() == prev->bytes()) ++sameAsPrevious;
+                    // The program's effect is in the Program mode effect edit buffer (opcode 09, edit 0).
+                    if (prog) {
+                        midi.send(qs::editEffectsRequest(0));
+                        if (auto r = midi.waitFor([](const qs::Bytes& m) { return qs::opcodeOf(m) == qs::EditEffectsDump; }, Session::paced(1000), this))
+                            if (auto e = qs::Effects::fromDump(*r)) fx[bank][size_t(p)] = e->bytes();
+                    }
                 }
                 if (!prog) {
                     if (threadShouldExit()) break;
@@ -249,8 +266,10 @@ public:
         for (int bank : banks) {
             const int got = counts[bank];
             if (got > 0) {
-                for (size_t p = 0; p < 128; ++p)
+                for (size_t p = 0; p < 128; ++p) {
                     if (results[bank][p]) session.library.programs[size_t(bank)][p] = results[bank][p];
+                    if (fx[bank][p]) session.library.effects[size_t(bank)][p] = fx[bank][p];
+                }
                 session.library.source[size_t(bank)] = "your " + (session.deviceName.isNotEmpty() ? session.deviceName : juce::String("QS")) +
                                                        " (read " + juce::Time::getCurrentTime().formatted("%Y-%m-%d") + ")";
             }
@@ -270,6 +289,7 @@ private:
     Session& session;
     std::vector<int> banks;
     std::map<int, std::array<std::optional<qs::Program>, 128>> results;
+    std::map<int, std::array<std::optional<qs::Bytes>, 128>> fx;  // each program's effect
     std::map<int, int> counts;
     juce::StringArray problems, log;
     std::function<void(juce::String)> onDone;
@@ -285,6 +305,7 @@ public:
         : ThreadWithProgressWindow("Reading mixes from the QS", true, true), session(s), banks(std::move(b)), onDone(std::move(done)) {}
 
     void run() override {
+        MidiLink::JobScope jobScope(session.midi);
         auto& midi = session.midi;
         const int total = int(banks.size()) * 100;
         int doneCount = 0;
@@ -351,7 +372,7 @@ public:
                         msg = midi.waitFor(isMix(100), 1500, this);
                         if (!msg) continue;
                         if (!prev.empty() && payload(*msg) == prev && attempt < 3) {  // not switched yet
-                            wait(150 + 100 * attempt);
+                            wait(Session::paced(150 + 100 * attempt));
                             continue;
                         }
                         break;
@@ -429,9 +450,31 @@ void sendPaced(Session& s, const std::vector<qs::Bytes>& msgs, juce::ThreadWithP
     for (size_t i = 0; i < msgs.size() && !t->threadShouldExit(); ++i) {
         s.midi.send(msgs[i]);
         t->setProgress(double(i + 1) / double(msgs.size()));
-        juce::Thread::sleep(int(MidiLink::wireSeconds(msgs[i].size()) * 1000) + 20);
+        juce::Thread::sleep(int(MidiLink::wireSeconds(msgs[i].size()) * 1000) + Session::paced(20));
     }
 }
+
+// Sends a list of messages (a bank, a swap) at a pace the QS can store them.
+class SendMessagesJob : public juce::ThreadWithProgressWindow {
+public:
+    SendMessagesJob(Session& s, std::vector<qs::Bytes> m, juce::String title, std::function<void(bool)> done)
+        : ThreadWithProgressWindow(title, true, true), session(s), msgs(std::move(m)), onDone(std::move(done)) {}
+    void run() override {
+        MidiLink::JobScope jobScope(session.midi);
+        sendPaced(session, msgs, this);
+        ok = !threadShouldExit();
+    }
+    void threadComplete(bool) override {
+        if (onDone) onDone(ok);
+        delete this;
+    }
+
+private:
+    Session& session;
+    std::vector<qs::Bytes> msgs;
+    bool ok = false;
+    std::function<void(bool)> onDone;
+};
 
 // Step 1 of "copy a bank to the card": back up the User bank (Send All), then load the chosen data into User.
 class CardCopyPrepJob : public juce::ThreadWithProgressWindow {
@@ -441,6 +484,7 @@ public:
           backup(backupFile), onDone(std::move(done)) {}
 
     void run() override {
+        MidiLink::JobScope jobScope(session.midi);
         auto& midi = session.midi;
         setStatusMessage("Backing up your User bank (Send All)...");
         midi.clearQueue();
@@ -490,6 +534,7 @@ public:
     RestoreJob(Session& s, juce::File f, std::function<void(juce::String)> done)
         : ThreadWithProgressWindow("Restoring your User bank", true, false), session(s), file(f), onDone(std::move(done)) {}
     void run() override {
+        MidiLink::JobScope jobScope(session.midi);
         juce::MemoryBlock mb;
         if (!file.loadFileAsData(mb)) { message = "Couldn't read " + file.getFullPathName(); return; }
         auto ptr = static_cast<const uint8_t*>(mb.getData());
@@ -566,7 +611,7 @@ LibraryTab::LibraryTab(Session& s) : session(s) {
     addAndMakeVisible(list);
 
     for (juce::Component* c : std::initializer_list<juce::Component*>{&prevBtn, &nextBtn, &readBtn, &importFolderBtn, &importOneBtn, &loadNote,
-                                                                    &editBtn, &storeBtn, &factoryLink, &sourceLabel})
+                                                                    &editBtn, &storeBtn, &factoryLink, &sourceLabel, &fxBtn, &toolsBtn})
         addAndMakeVisible(c);
     addChildComponent(copyToCardBtn);
     addChildComponent(sendBtn);
@@ -575,7 +620,7 @@ LibraryTab::LibraryTab(Session& s) : session(s) {
     readBtn.setButtonText("Read from the synth...");
     importOneBtn.setButtonText("Load one .syx file into the list...");
     importFolderBtn.setButtonText("Load a folder of .syx files...");
-    editBtn.setButtonText("Edit this program");
+    editBtn.setButtonText("Edit");
     storeBtn.setButtonText("Copy it to a User slot on the QS...");
     sendBtn.setButtonText("Hear the file's version (not stored)");
     copyToCardBtn.setButtonText("Put a whole bank on this card...");
@@ -611,7 +656,14 @@ LibraryTab::LibraryTab(Session& s) : session(s) {
     progViewBtn.setToggleState(true, juce::dontSendNotification);
     importFolderBtn.onClick = [this] { importFolder(); };
     importOneBtn.onClick = [this] { importOneSyx(); };
-    editBtn.onClick = [this] { openInEditor(selectedProgram()); };
+    editBtn.onClick = [this] {
+        if (mixView) openMixInEditor(selectedProgram());
+        else openInEditor(selectedProgram());
+    };
+    fxBtn.onClick = [this] { openEffectOf(selectedProgram()); };
+    fxBtn.setTooltip("Opens this program's effect in the Effects editor.");
+    toolsBtn.onClick = [this] { showBankTools(); };
+    toolsBtn.setTooltip("Save the bank as a .syx, send it to the User bank, swap or copy programs, export the names.");
     sendBtn.onClick = [this] { sendCachedToEditBuffer(); };
     storeBtn.onClick = [this] { storeToUser(); };
 
@@ -774,7 +826,9 @@ void LibraryTab::timerCallback() {
 }
 
 void LibraryTab::listBoxItemDoubleClicked(int row, const juce::MouseEvent&) {
-    if (!mixView && row >= 0 && row < int(rows.size())) openInEditor(rows[size_t(row)]);
+    if (row < 0 || row >= int(rows.size())) return;
+    if (mixView) openMixInEditor(rows[size_t(row)]);
+    else openInEditor(rows[size_t(row)]);
 }
 
 int LibraryTab::count() const { return mixView ? 100 : 128; }
@@ -786,8 +840,9 @@ void LibraryTab::setMixView(bool mix, bool switchQs) {
     mixView = mix;
     progViewBtn.setToggleState(!mix, juce::dontSendNotification);
     mixViewBtn.setToggleState(mix, juce::dontSendNotification);
-    for (auto* b : {&editBtn, &sendBtn, &storeBtn}) b->setEnabled(!mix);
-    editBtn.setButtonText(mix ? "Edit this mix (coming later)" : "Edit this program");
+    for (auto* b : {&sendBtn, &storeBtn}) b->setEnabled(!mix);
+    editBtn.setButtonText(mix ? "Edit this mix" : "Edit");
+    fxBtn.setEnabled(!mix);
     if (panel) panel->setMixMode(mix);
     showBank(bank);
     if (!switchQs || !session.midi.isOpen()) return;
@@ -1048,6 +1103,191 @@ void LibraryTab::sendCachedToEditBuffer() {
     if (session.setStatus) session.setStatus("Auditioning " + juce::String(p->name()).trimEnd() + " on the QS (not stored).");
 }
 
+void LibraryTab::openMixInEditor(int mix) {
+    if (!session.openMixEditor) return;
+    const auto where = (bank == 0 ? juce::String("User mix ") : bankTitle(bank) + " mix ") + juce::String(mix).paddedLeft('0', 2);
+    const auto& cached = session.library.mixes[size_t(bank)][size_t(mix)];
+    std::optional<qs::Mix> m;
+    if (cached) m = qs::Mix::fromDump(cached->dump);
+    if (session.midi.isOpen()) {
+        selectMixOnQs(mix);
+        // Not read yet: the editor asks the QS for its mix edit buffer once the mix is selected.
+        session.openMixEditor(m.value_or(qs::Mix()), where, bank == 0 ? mix : -1);
+        return;
+    }
+    if (m) session.openMixEditor(*m, where + " (offline copy)", bank == 0 ? mix : -1);
+    else alert("Not available", "Connect to the QS, or read the mixes first, to open this mix.");
+}
+
+void LibraryTab::openEffectOf(int prog) {
+    if (!session.openEffectsEditor) return;
+    const auto where = bankTitle(bank) + " " + juce::String(prog).paddedLeft('0', 3) + " effect";
+    const auto& cached = session.library.effects[size_t(bank)][size_t(prog)];
+    if (session.midi.isOpen()) {
+        session.selectProgram(bank, prog);
+        session.openEffectsEditor(qs::Effects(), where, 0);  // fetch the effect the program brought in
+        return;
+    }
+    if (cached) session.openEffectsEditor(qs::Effects::fromData(*cached), where + " (offline copy)", 0);
+    else alert("Not available", "Connect to the QS, or read this bank first, to open this effect.");
+}
+
+void LibraryTab::showBankTools() {
+    juce::PopupMenu m;
+    const int known = session.library.countRead(bank);
+    m.addSectionHeader(bankTitle(bank) + " (" + juce::String(known) + " of 128 programs known)");
+    m.addItem(1, "Save this bank as a .syx file...", known > 0);
+    m.addItem(2, "Send this bank to the QS User bank...", known == 128 && bank != 0 && session.midi.isOpen());
+    m.addItem(3, "Swap or copy programs in the User bank...", session.midi.isOpen());
+    m.addSeparator();
+    m.addItem(4, "Export the names in this list (CSV)...");
+    m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&toolsBtn), [this](int r) {
+        if (r == 1) saveBankAsSyx();
+        if (r == 2) sendBankToUser();
+        if (r == 3) swapOrCopy();
+        if (r == 4) exportNames();
+    });
+}
+
+// Programs as User Program Dumps (00), their effects (06) and, for this bank, its mixes (0E): a file any QS editor can load.
+void LibraryTab::saveBankAsSyx() {
+    const int b = bank;
+    auto name = juce::File::createLegalFileName(session.library.model + " " + bankTitle(b)) + ".syx";
+    chooser = std::make_unique<juce::FileChooser>("Save the bank", settingsDir().getChildFile(name), "*.syx");
+    chooser->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting, [this, b](const juce::FileChooser& fc) {
+        auto f = fc.getResult();
+        if (f == juce::File()) return;
+        qs::Bytes out;
+        int np = 0, ne = 0, nm = 0;
+        for (int i = 0; i < 128; ++i) {
+            if (auto& p = session.library.programs[size_t(b)][size_t(i)]) {
+                const auto d = p->userDump(i);
+                out.insert(out.end(), d.begin(), d.end());
+                ++np;
+            }
+            if (auto& e = session.library.effects[size_t(b)][size_t(i)]) {
+                const auto d = qs::Effects::fromData(*e).userDump(i);
+                out.insert(out.end(), d.begin(), d.end());
+                ++ne;
+            }
+        }
+        for (int i = 0; i < 100; ++i)
+            if (auto& m = session.library.mixes[size_t(b)][size_t(i)]) {
+                out.insert(out.end(), m->dump.begin(), m->dump.end());
+                ++nm;
+            }
+        f = f.withFileExtension("syx");
+        f.replaceWithData(out.data(), out.size());
+        qslog::action("Saved " + bankTitle(b) + " to " + f.getFullPathName());
+        alert("Saved", juce::String(np) + " programs, " + juce::String(ne) + " effects and " + juce::String(nm) + " mixes saved to\n" +
+                           f.getFullPathName() + "\n\nLoading this file back to a QS writes them into its User bank.");
+    });
+}
+
+void LibraryTab::sendBankToUser() {
+    const int b = bank;
+    juce::String fxNote;
+    int nfx = 0;
+    for (auto& e : session.library.effects[size_t(b)]) nfx += e.has_value();
+    fxNote = nfx == 128 ? juce::String("with all their effects") : juce::String(nfx) + " effects known; the other programs keep the User bank's current effects";
+    auto* w = new juce::AlertWindow("Send " + bankTitle(b) + " to the User bank",
+                                    "This replaces all 128 User programs on the QS with " + bankTitle(b) + " (" + fxNote + ").\n"
+                                    "Back up first on the Backup & Restore page if you want to keep them.",
+                                    juce::MessageBoxIconType::WarningIcon);
+    w->addButton("Send", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    w->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    w->enterModalState(true, juce::ModalCallbackFunction::create([this, b](int r) {
+        if (r != 1) return;
+        std::vector<qs::Bytes> msgs;
+        for (int i = 0; i < 128; ++i) {
+            if (auto& p = session.library.programs[size_t(b)][size_t(i)]) msgs.push_back(p->userDump(i));
+            if (auto& e = session.library.effects[size_t(b)][size_t(i)]) msgs.push_back(qs::Effects::fromData(*e).userDump(i));
+        }
+        qslog::action("Sending " + bankTitle(b) + " to the User bank (" + juce::String(int(msgs.size())) + " messages)");
+        (new SendMessagesJob(session, msgs, "Sending " + bankTitle(b) + " to the User bank", [this, b](bool ok) {
+            if (ok) {
+                session.library.programs[0] = session.library.programs[size_t(b)];
+                for (size_t i = 0; i < 128; ++i)
+                    if (session.library.effects[size_t(b)][i]) session.library.effects[0][i] = session.library.effects[size_t(b)][i];
+                session.library.source[0] = bankTitle(b) + " (sent " + juce::Time::getCurrentTime().formatted("%Y-%m-%d") + ")";
+                session.library.save();
+                refresh();
+            }
+            alert(ok ? "Done" : "Stopped", ok ? bankTitle(b) + " is now in the QS's User bank." : "Stopped part way: some User programs were replaced.");
+        }))->launchThread();
+    }), true);
+}
+
+void LibraryTab::swapOrCopy() {
+    auto* w = new juce::AlertWindow("Swap or copy User programs",
+                                    "Programs move together with their effects when QS Studio knows them (read the User bank first).",
+                                    juce::MessageBoxIconType::QuestionIcon);
+    juce::StringArray items;
+    for (int i = 0; i < 128; ++i) {
+        const auto n = session.library.nameOf(0, i);
+        items.add(juce::String(i).paddedLeft('0', 3) + "  " + (n.isNotEmpty() ? n : juce::String("(not read)")));
+    }
+    w->addComboBox("action", {"Swap the two programs", "Copy the first onto the second"}, "What");
+    w->addComboBox("a", items, "First User program");
+    w->addComboBox("b", items, "Second User program");
+    w->getComboBoxComponent("a")->setSelectedItemIndex(bank == 0 ? selectedProgram() : 0);
+    w->getComboBoxComponent("b")->setSelectedItemIndex(0);
+    w->addButton("Go", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    w->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    w->enterModalState(true, juce::ModalCallbackFunction::create([this, w](int r) {
+        if (r != 1) return;
+        const bool swap = w->getComboBoxComponent("action")->getSelectedItemIndex() == 0;
+        const int a = w->getComboBoxComponent("a")->getSelectedItemIndex(), b = w->getComboBoxComponent("b")->getSelectedItemIndex();
+        auto& lib = session.library;
+        if (a == b) return;
+        if (!lib.programs[0][size_t(a)] || (swap && !lib.programs[0][size_t(b)])) {
+            alert("Read the User bank first", "QS Studio needs the programs' data to move them. Click Read from the synth... and read the User bank.");
+            return;
+        }
+        const auto pa = lib.programs[0][size_t(a)], pb = lib.programs[0][size_t(b)];
+        const auto ea = lib.effects[0][size_t(a)], eb = lib.effects[0][size_t(b)];
+        std::vector<qs::Bytes> msgs{pa->userDump(b)};
+        if (ea) msgs.push_back(qs::Effects::fromData(*ea).userDump(b));
+        if (swap) {
+            msgs.push_back(pb->userDump(a));
+            if (eb) msgs.push_back(qs::Effects::fromData(*eb).userDump(a));
+        }
+        qslog::action(juce::String(swap ? "Swap" : "Copy") + " User " + juce::String(a) + (swap ? " <-> " : " -> ") + "User " + juce::String(b));
+        (new SendMessagesJob(session, msgs, swap ? "Swapping programs" : "Copying a program", [this, swap, a, b, pa, pb, ea, eb](bool ok) {
+            if (!ok) return;
+            auto& l = session.library;
+            l.programs[0][size_t(b)] = pa;
+            if (ea) l.effects[0][size_t(b)] = ea;
+            if (swap) {
+                l.programs[0][size_t(a)] = pb;
+                if (eb) l.effects[0][size_t(a)] = eb;
+            }
+            l.save();
+            refresh();
+            if (session.setStatus) session.setStatus(swap ? "Swapped User " + juce::String(a) + " and " + juce::String(b) + "."
+                                                          : "Copied User " + juce::String(a) + " to " + juce::String(b) + ".");
+        }))->launchThread();
+    }), true);
+}
+
+void LibraryTab::exportNames() {
+    const bool mixes = mixView;
+    const int b = bank;
+    const auto name = juce::File::createLegalFileName(session.library.model + " " + bankTitle(b) + (mixes ? " mixes" : " programs")) + ".csv";
+    chooser = std::make_unique<juce::FileChooser>("Export names", juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile(name),
+                                                  "*.csv");
+    chooser->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting, [this, mixes, b](const juce::FileChooser& fc) {
+        auto f = fc.getResult();
+        if (f == juce::File()) return;
+        juce::String csv = "Bank,Number,Name\n";
+        for (int i = 0; i < (mixes ? 100 : 128); ++i) {
+            const auto n = mixes ? session.library.mixNameOf(b, i) : session.library.nameOf(b, i);
+            csv << bankTitle(b) << "," << i << ",\"" << n.replace("\"", "\"\"") << "\"\n";
+        }
+        f.withFileExtension("csv").replaceWithText(csv);
+    });
+}
+
 void LibraryTab::storeToUser() {
     const int prog = selectedProgram();
     auto& p = session.library.programs[size_t(bank)][size_t(prog)];
@@ -1067,18 +1307,28 @@ void LibraryTab::storeToUser() {
     w->addButton("Store", 1, juce::KeyPress(juce::KeyPress::returnKey));
     w->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
     const auto data = *p;
-    w->enterModalState(true, juce::ModalCallbackFunction::create([this, w, data](int r) {
+    const auto fx = session.library.effects[size_t(bank)][size_t(prog)];
+    if (fx) w->addComboBox("withFx", {"The program and its effect", "The program only (keep that slot's effect)"}, "Store");
+    w->enterModalState(true, juce::ModalCallbackFunction::create([this, w, data, fx](int r) {
         if (r != 1) return;
         const int n = w->getTextEditorContents("num").getIntValue();
         if (n < 0 || n > 127) {
             alert("Store", "Pick a slot from 0 to 127.");
             return;
         }
+        const bool withFx = fx && w->getComboBoxComponent("withFx") != nullptr && w->getComboBoxComponent("withFx")->getSelectedItemIndex() == 0;
         session.midi.send(data.userDump(n));
         session.library.programs[0][size_t(n)] = data;
+        if (withFx) {
+            session.midi.send(qs::Effects::fromData(*fx).userDump(n));
+            session.library.effects[0][size_t(n)] = fx;
+        }
         session.library.save();
         refresh();
-        if (session.setStatus) session.setStatus("Stored " + juce::String(data.name()).trimEnd() + " to User " + juce::String(n).paddedLeft('0', 3));
+        qslog::action("Stored \"" + juce::String(data.name()).trimEnd() + "\" to User " + juce::String(n) + (withFx ? " with its effect" : " (program only)"));
+        if (session.setStatus)
+            session.setStatus("Stored " + juce::String(data.name()).trimEnd() + " to User " + juce::String(n).paddedLeft('0', 3) +
+                              (withFx ? " with its effect." : "."));
     }), true);
 }
 
@@ -1278,6 +1528,8 @@ void LibraryTab::resized() {
     progViewBtn.setBounds(searchRow.removeFromLeft(100));
     mixViewBtn.setBounds(searchRow.removeFromLeft(80));
     searchRow.removeFromLeft(10);
+    toolsBtn.setBounds(searchRow.removeFromRight(120));
+    searchRow.removeFromRight(10);
     nextBtn.setBounds(searchRow.removeFromRight(40));
     searchRow.removeFromRight(6);
     prevBtn.setBounds(searchRow.removeFromRight(40));
@@ -1301,7 +1553,14 @@ void LibraryTab::resized() {
     right.removeFromTop(18);
     sectionThis = right.getY();
     right.removeFromTop(20);
-    for (auto* b : {&editBtn, &storeBtn, &sendBtn}) {
+    {
+        auto pair = right.removeFromTop(34);
+        editBtn.setBounds(pair.removeFromLeft(pair.getWidth() / 2 - 3));
+        pair.removeFromLeft(6);
+        fxBtn.setBounds(pair);
+        right.removeFromTop(6);
+    }
+    for (auto* b : {&storeBtn, &sendBtn}) {
         b->setBounds(right.removeFromTop(34));
         right.removeFromTop(6);
     }
