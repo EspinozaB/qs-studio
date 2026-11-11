@@ -25,9 +25,26 @@ public:
         }
         for (juce::Component* c : std::initializer_list<juce::Component*>{&pitch, &mod, &volume}) addAndMakeVisible(c);
         session.volume.addListener(this);
+        // Follow the MIDI controller: its wheels and sliders move the ones on screen.
+        session.controllerMoved = [this](const juce::MidiMessage& m) {
+            if (m.isPitchWheel()) pitch.setValue(m.getPitchWheelValue() - 8192, false);
+            else if (m.isController()) {
+                const int cc = m.getControllerNumber(), v = m.getControllerValue();
+                if (cc == 1) mod.setValue(v, false);
+                else if (cc == 7) {
+                    const juce::ScopedValueSetter<bool> svs(fromController, true);
+                    session.volume = v;
+                }
+                for (int i = 0; i < 4; ++i)
+                    if (cc == session.global.controller[i]) ctrl[i]->setValue(v, false);
+            }
+        };
         updateLayout();
     }
-    ~PerformanceControls() override { session.volume.removeListener(this); }
+    ~PerformanceControls() override {
+        session.controllerMoved = nullptr;
+        session.volume.removeListener(this);
+    }
 
     // Call when the model or the Global settings change.
     void updateLayout() {
@@ -104,8 +121,9 @@ private:
     void valueChanged(juce::Value& v) override {
         const int vol = int(v.getValue());
         volume.setValue(vol, false);
-        cc(7, vol);
+        if (!fromController) cc(7, vol);  // the controller's own CC7 already went to the QS
     }
+    bool fromController = false;
     void cc(int number, int v) { session.midi.sendMidi(juce::MidiMessage::controllerEvent(session.channel, juce::jlimit(0, 127, number), v)); }
 
     Session& session;

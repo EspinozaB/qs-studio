@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(QSStudio VERSION 0.4.1 LANGUAGES C CXX)
+project(QSStudio VERSION 0.4.2 LANGUAGES C CXX)
 # Release stage shown with the version: pre-alpha, alpha, beta, rc.1 ... and "" for a final release. See README "Versions".
 set(QS_STAGE "pre-alpha")
 
@@ -26,6 +26,8 @@ if(QS_BUILD_APP)
     juce_add_gui_app(QSStudio
         PRODUCT_NAME "QS Studio"
         COMPANY_NAME "QS Studio"
+        BUNDLE_ID "io.github.espinozab.qsstudio"
+        ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.png"
         VERSION ${PROJECT_VERSION})
     juce_generate_juce_header(QSStudio)
     target_sources(QSStudio PRIVATE app/Main.cpp app/MainComponent.cpp app/LibraryTab.cpp app/EditorTab.cpp app/RecorderTab.cpp app/Pages.cpp)

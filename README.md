@@ -3,7 +3,7 @@
 A modern, portable toolkit for the Alesis QS6 / QS7 / QS8 / QSR. One `.exe`, no installer, no registry, nothing in AppData:
 everything it saves goes in a `QS Studio Data` folder next to the program.
 
-**Status: 0.4.1 pre-alpha.** Only being tested by the author so far. See [Versions](#versions).
+**Status: 0.4.2 pre-alpha.** Only being tested by the author so far. See [Versions](#versions).
 
 ## What it does
 

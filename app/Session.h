@@ -208,6 +208,7 @@ struct Session : private juce::MidiKeyboardState::Listener, private juce::MidiIn
         library.load();
     }
     ~Session() override {
+        *aliveFlag = false;
         closeController();
         keys.removeListener(this);
     }
@@ -309,9 +310,10 @@ struct Session : private juce::MidiKeyboardState::Listener, private juce::MidiIn
 
     // Mixes can only be picked over MIDI when Global > MIDI Program Select is set to a channel (Ch 1-16): the QS then
     // changes mixes on program changes received on that channel (QS6 manual, Global page 14). With it "On", program
-    // changes go to the programs inside the mix instead.
-    bool canSelectMixes() const { return globalKnown && global.programSelect >= 2; }
-    int mixSelectChannel() const { return juce::jlimit(1, 16, global.programSelect - 1); }
+    // changes go to the programs inside the mix instead. Tested on a QS6: left on a channel, Program mode stops
+    // changing programs. So QS Studio sets it to its channel only for the mix change and puts the user's setting back.
+    bool canSelectMixes() const { return globalKnown; }
+    int mixSelectChannel() const { return global.programSelect >= 2 ? global.programSelect - 1 : channel; }
 
     void setProgramSelect(int value) {  // 0 Off, 1 On, 2-17 = Channel 1-16
         global.programSelect = value;
@@ -327,8 +329,12 @@ struct Session : private juce::MidiKeyboardState::Listener, private juce::MidiIn
             programModeSent = false;
         }
         const int ch = mixSelectChannel();
+        const int original = global.programSelect;
+        const bool temporary = original < 2;
+        if (temporary) midi.send(qs::paramEdit(0, 0, 0, 5, 0, 0, ch + 1));  // Program Select = this channel, for this change only
         midi.sendMidi(juce::MidiMessage::controllerEvent(ch, 0, kBanks[size_t(bank)].cc0));
         midi.sendMidi(juce::MidiMessage::programChange(ch, mix));
+        if (temporary) midi.send(qs::paramEdit(0, 0, 0, 5, 0, 0, original));  // and back to the user's setting
         if (currentProgramChanged) currentProgramChanged(bank, mix);
     }
 
@@ -356,12 +362,22 @@ private:
         auto m = in;
         m.setChannel(channel);
         midi.sendMidi(m);
-        // Light up the on-screen keys without sending the note a second time.
-        echoing() = true;
-        if (m.isNoteOn()) keys.noteOn(1, m.getNoteNumber(), m.getFloatVelocity());
-        else if (m.isNoteOff()) keys.noteOff(1, m.getNoteNumber(), 0.0f);
-        echoing() = false;
+        // Show it on screen (keys light up, wheels and sliders move) on the message thread, without sending it twice.
+        juce::MessageManager::callAsync([this, m, alive = aliveFlag] {
+            if (!*alive) return;
+            echoing() = true;
+            if (m.isNoteOn()) keys.noteOn(1, m.getNoteNumber(), m.getFloatVelocity());
+            else if (m.isNoteOff()) keys.noteOff(1, m.getNoteNumber(), 0.0f);
+            echoing() = false;
+            if (controllerMoved) controllerMoved(m);
+        });
     }
+    std::shared_ptr<bool> aliveFlag = std::make_shared<bool>(true);
+
+public:
+    std::function<void(const juce::MidiMessage&)> controllerMoved;  // a message from the MIDI controller, on the message thread
+
+private:
 
     std::unique_ptr<juce::MidiInput> controllerIn;
 };

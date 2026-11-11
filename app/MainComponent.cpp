@@ -606,6 +606,10 @@ void MainComponent::sysexReceived(const qs::Bytes& msg) {
         if (g->programSelect == 0)
             statusLabel.setText("MIDI Program Select is OFF on the QS, so it ignores program changes. Turn it on in Global Settings.",
                                 juce::dontSendNotification);
+        else if (g->programSelect >= 2)
+            statusLabel.setText("MIDI Program Select is set to channel " + juce::String(g->programSelect - 1) +
+                                    " on the QS. If programs don't change, set it to On in Global Settings.",
+                                juce::dontSendNotification);
     }
 }
 

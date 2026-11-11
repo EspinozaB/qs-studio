@@ -805,7 +805,7 @@ void LibraryTab::setMixView(bool mix, bool switchQs) {
     updateLcd();
 }
 
-// Picking a mix needs Program Select set to a channel; offer to set it to QS Studio's channel.
+// Picking a mix: Session::selectMix sets Program Select to a channel just for the change. It needs the Global settings first.
 void LibraryTab::selectMixOnQs(int mix) {
     session.currentMixBank = bank;
     session.currentMix = mix;
@@ -813,38 +813,13 @@ void LibraryTab::selectMixOnQs(int mix) {
         updateLcd();
         return;
     }
-    if (session.canSelectMixes()) {
-        session.selectMix(bank, mix);
-        return;
-    }
-    updateLcd();
     if (!session.globalKnown) {
         session.midi.send(qs::globalRequest());
-        if (session.setStatus) session.setStatus("Checking the QS's Program Select setting... click the mix again in a moment.");
+        if (session.setStatus) session.setStatus("Reading the QS's Global settings first... click the mix again in a moment.");
+        updateLcd();
         return;
     }
-    if (askedProgramSelect) {
-        if (session.setStatus) session.setStatus("The QS only changes mixes over MIDI when MIDI Program Select is set to a channel (Global Settings).");
-        return;
-    }
-    askedProgramSelect = true;
-    const int ch = session.channel;
-    juce::AlertWindow::showAsync(
-        juce::MessageBoxOptions()
-            .withIconType(juce::MessageBoxIconType::QuestionIcon)
-            .withTitle("Let QS Studio pick mixes?")
-            .withMessage("The QS only changes mixes from MIDI when Global > MIDI Program Select is set to a channel, not \"On\". "
-                         "Set it to channel " + juce::String(ch) + " (QS Studio's channel) now?\n\n"
-                         "Programs still change on that channel in Program mode. You can change it back on the Global Settings page.")
-            .withButton("Set it to channel " + juce::String(ch))
-            .withButton("Not now"),
-        [this, ch](int r) {
-            if (r != 1) return;
-            session.setProgramSelect(ch + 1);
-            session.midi.send(qs::globalRequest());  // refresh the Global page from the QS
-            session.selectMix(session.currentMixBank, session.currentMix);
-            updateLcd();
-        });
+    session.selectMix(bank, mix);
 }
 
 void LibraryTab::readMixes(std::vector<int> banks) {
@@ -884,13 +859,18 @@ void LibraryTab::updateProgramButtons() {
 }
 
 void LibraryTab::updateCardButtons() {
-    const bool allowed = session.cardState != Session::CardState::Absent || cardAnyway.getToggleState();
+    // Card banks need a card: found by the check, or allowed by the option. Offline QS Studio can't check, so they're greyed out.
+    const bool connected = session.midi.isOpen();
+    const bool allowed = cardAnyway.getToggleState() || session.cardState == Session::CardState::Present ||
+                         (connected && session.cardState == Session::CardState::Unknown);
     bankButtons[5]->setEnabled(allowed);
     cardBankBox.setEnabled(allowed);
     cardCheckBtn.setVisible(session.cardState == Session::CardState::Absent && session.midi.isOpen());
-    cardAnyway.setVisible(session.cardState == Session::CardState::Absent || cardAnyway.getToggleState());
+    cardAnyway.setVisible(!allowed || cardAnyway.getToggleState());
     bankButtons[5]->setTooltip(allowed ? juce::String("Banks on the inserted card(s). A RAM512 has 8 banks; a sound QCard usually has 1.")
-                                       : juce::String("No card found in the QS. Power it off, insert a card, then click Check for a card."));
+                               : !connected ? juce::String("Connect to the QS so QS Studio can check for a card.")
+                                            : juce::String("No card found in the QS. Power it off, insert a card, then click Check for a card."));
+    if (!allowed && bank >= kFirstCardBank) showBank(0);  // don't leave a card bank on screen that the QS can't play
 }
 
 void LibraryTab::probeCard(std::function<void()> thenIfFound) {

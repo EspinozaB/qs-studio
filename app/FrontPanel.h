@@ -211,7 +211,7 @@ public:
 
 private:
     static constexpr float kW = 1200.0f;
-    float logicalH() const { return layout == Layout::Classic ? 214.0f : layout == Layout::Silver ? 206.0f : 128.0f; }
+    float logicalH() const { return layout == Layout::Classic ? 214.0f : layout == Layout::Silver ? 226.0f : 128.0f; }
     juce::AffineTransform transform() const {
         const float s = juce::jmin(1.0f, float(getWidth()) / kW);
         return juce::AffineTransform::scale(s).translated((float(getWidth()) - kW * s) / 2.0f, 0.0f);
@@ -252,10 +252,22 @@ private:
         g.drawLine(l1, y, l1, y + tick, 1.0f);
         g.drawLine(r2, y, r2, y + tick, 1.0f);
     }
-    static void plainModel(juce::Graphics& g, const juce::String& name, juce::Rectangle<float> r, float size) {
-        g.setColour(juce::Colour(0xffaab4be));
-        g.setFont(theme::uiFont(size, true).withHorizontalScale(1.1f));
-        g.drawText(name, r, juce::Justification::centredLeft);
+    // The model name, set big and bold in a metallic finish so it reads like a nameplate. It's our own lettering
+    // (a plain typeface), not the maker's logo.
+    static void modelName(juce::Graphics& g, const juce::String& name, juce::Rectangle<float> r, juce::Colour top, juce::Colour bottom,
+                          juce::Justification j = juce::Justification::centredLeft) {
+        juce::GlyphArrangement ga;
+        const auto font = theme::uiFont(r.getHeight(), true).withHorizontalScale(1.25f).withExtraKerningFactor(0.06f);
+        ga.addFittedText(font, name, r.getX(), r.getY(), r.getWidth(), r.getHeight(), j, 1, 0.8f);
+        juce::Path p;
+        ga.createPath(p);
+        const auto b = p.getBounds();
+        g.setColour(juce::Colours::black.withAlpha(0.45f));
+        g.fillPath(p, juce::AffineTransform::translation(1.5f, 2.0f));
+        g.setGradientFill(juce::ColourGradient(top, 0, b.getY(), bottom, 0, b.getBottom(), false));
+        g.fillPath(p);
+        g.setColour(juce::Colours::white.withAlpha(0.35f));
+        g.strokePath(p, juce::PathStrokeType(0.7f));
     }
 
     // ---------------- LCDs ----------------
@@ -462,8 +474,11 @@ private:
         }
         // Model name, where the QS6 has its logo (plain text, not the logo).
         const float mx = kGridX + 10 * kCellW + 100;
-        plainModel(g, model, {mx, kDigitY - 4, kW - 14 - mx, 34}, 30.0f);
-        label(g, "64 VOICE EXPANDABLE SYNTHESIZER", {mx, kDigitY + 30, kW - 14 - mx, 9}, 6.0f, juce::Justification::centredLeft, 0.7f);
+        juce::ignoreUnused(mx);
+        // Right of 0-9, under the last group keys, as on the keyboard.
+        modelName(g, model, {kGridX + 10 * kCellW + 14, kDigitY - 6, kW - 8 - (kGridX + 10 * kCellW + 14), 40}, juce::Colour(0xffd9ecf8),
+                  juce::Colour(0xff6f93ae), juce::Justification::centredRight);
+
     }
 
     // ---------------- QS6.2 / QS8.2 ----------------
@@ -546,10 +561,8 @@ private:
                   juce::Justification::centredLeft);
         }
         // Model name in plain text where the logo is, with the descriptive line under it.
-        g.setColour(juce::Colour(0xff1f4fae));
-        g.setFont(theme::uiFont(30.0f, true).withHorizontalScale(1.1f));
-        g.drawText(model, juce::Rectangle<float>(1010, 150, 176, 32), juce::Justification::centredRight);
-        label(g, "64 VOICE SYNTHESIZER WITH FLASH ROM EXPANSION", {880, 184, 306, 9}, 6.0f, juce::Justification::centredRight, 0.8f);
+        modelName(g, model, {900, 174, 288, 34}, juce::Colour(0xff4f86e6), juce::Colour(0xff163e94), juce::Justification::centredRight);
+        label(g, "64 VOICE SYNTHESIZER WITH FLASH ROM EXPANSION", {880, 213, 306, 8}, 6.0f, juce::Justification::centredRight, 0.8f);
     }
 
     // ---------------- QSR ----------------
@@ -616,7 +629,8 @@ private:
         bracket(g, {804, 106, 102, 12}, "BANK SELECT", true, 7.0f);
 
         // Model name (plain text, where the QSR has its logo), card slots and power.
-        plainModel(g, "QSR", {928, 18, 160, 34}, 30.0f);
+        modelName(g, "QSR", {slots.getX(), 14, slots.getWidth(), 42}, juce::Colour(0xffe6eaee), juce::Colour(0xff7d8791),
+                  juce::Justification::centred);  // centred over the card slots, where the unit's nameplate is
         for (int i = 0; i < 2; ++i) {
             juce::Rectangle<float> slot(slots.getX(), slots.getY() + i * 20.0f, slots.getWidth(), 17);
             g.setColour(juce::Colour(0xff2a2b2e));
