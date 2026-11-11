@@ -67,6 +67,7 @@ public:
     void openProgram(const qs::Program& p, const juce::String& where);
     void showDetail(int sound, const juce::String& section, int drum = 0);
     void showOverview();
+    juce::String soundSummary(int sound) const;  // "Tympani (Percussion)   C-2 to G8   Poly"
 
     // Called by controls.
     void paramChanged(int sound, const qs::ParamDef& d, int drum, int value);

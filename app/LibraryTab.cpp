@@ -10,6 +10,157 @@ void alert(const juce::String& title, const juce::String& msg) {
 
 juce::String bankTitle(int b) { return kBanks[size_t(b)].title; }
 
+// Every read from the synth leaves a short log in QS Studio Data/Logs, to help when something didn't come through.
+void writeReadLog(const juce::String& what, size_t bankCount, const juce::StringArray& lines, const juce::StringArray& problems) {
+    auto dir = settingsDir().getChildFile("Logs");
+    dir.createDirectory();
+    auto f = dir.getChildFile("read-" + juce::Time::getCurrentTime().formatted("%Y-%m-%d") + ".txt");
+    juce::String text = "\n[" + juce::Time::getCurrentTime().formatted("%H:%M:%S") + "] read " + what + " from " + juce::String(int(bankCount)) +
+                        " bank(s), QS Studio " + versionLabel() + "\n";
+    for (auto& l : lines) text << "  " << l << "\n";
+    for (auto& p : problems) text << "  problem: " << p << "\n";
+    f.appendText(text);
+}
+
+// Looks for a card: notes the edit buffer, asks for card bank 1 program 0, and sees whether the QS changed program.
+// With no card the QS ignores the bank change and nothing changes.
+class CardProbeJob : public juce::ThreadWithProgressWindow {
+public:
+    CardProbeJob(Session& s, std::function<void(int)> done)  // 1 = card, 0 = none, -1 = no answer
+        : ThreadWithProgressWindow("Looking for a card in the QS", false, false), session(s), onDone(std::move(done)) {}
+    void run() override {
+        auto& midi = session.midi;
+        if (!session.programModeSent) {
+            midi.send(qs::modeSelect(0));
+            session.programModeSent = true;
+            wait(100);
+        }
+        auto editBuffer = [&]() -> std::optional<qs::Bytes> {
+            midi.clearQueue();
+            midi.send(qs::editProgramRequest(0));
+            if (auto r = midi.waitFor([](const qs::Bytes& m) { return qs::opcodeOf(m) == qs::EditProgramDump; }, 1500, this))
+                return qs::Bytes(r->begin() + 7, r->end());
+            return std::nullopt;
+        };
+        const auto before = editBuffer();
+        midi.sendMidi(juce::MidiMessage::controllerEvent(session.channel, 0, kBanks[size_t(kFirstCardBank)].cc0));
+        midi.sendMidi(juce::MidiMessage::programChange(session.channel, 0));
+        wait(400);
+        const auto after = editBuffer();
+        result = !before || !after ? -1 : (*before != *after ? 1 : 0);
+        if (result == 1) {
+            session.currentBank = kFirstCardBank;
+            session.currentProgram = 0;
+        }
+    }
+    void threadComplete(bool) override {
+        if (onDone) onDone(result);
+        delete this;
+    }
+
+private:
+    Session& session;
+    int result = -1;
+    std::function<void(int)> onDone;
+};
+
+// Picks what to read from the synth: which banks, and programs and/or mixes.
+class ReadChooser : public juce::Component {
+public:
+    ReadChooser(int currentBank, bool mixes, bool cardBanks, std::function<void(std::vector<int>, bool, bool)> go) : onGo(std::move(go)) {
+        intro.setText("QS Studio asks the synth for each program or mix and keeps a copy here, so names and programs show up "
+                      "even when the synth is off. Nothing on the synth is changed.",
+                      juce::dontSendNotification);
+        intro.setColour(juce::Label::textColourId, theme::dim);
+        intro.setJustificationType(juce::Justification::topLeft);
+        addAndMakeVisible(intro);
+        const int n = cardBanks ? int(kBanks.size()) : kFirstCardBank;
+        for (int b = 0; b < n; ++b) {
+            auto* t = bankToggles.add(new juce::ToggleButton(bankTitle(b)));
+            t->setToggleState(b == currentBank, juce::dontSendNotification);
+            t->onClick = [this] { updateEstimate(); };
+            addAndMakeVisible(t);
+        }
+        progs.setToggleState(!mixes, juce::dontSendNotification);
+        mixesT.setToggleState(mixes, juce::dontSendNotification);
+        for (auto* t : {&progs, &mixesT}) {
+            t->onClick = [this] { updateEstimate(); };
+            addAndMakeVisible(t);
+        }
+        for (auto* b : {&allMain, &none, &readBtn, &cancelBtn}) addAndMakeVisible(b);
+        allMain.onClick = [this] {
+            for (int b = 0; b < bankToggles.size(); ++b) bankToggles[b]->setToggleState(b < kFirstCardBank, juce::dontSendNotification);
+            updateEstimate();
+        };
+        none.onClick = [this] {
+            for (auto* t : bankToggles) t->setToggleState(false, juce::dontSendNotification);
+            updateEstimate();
+        };
+        readBtn.onClick = [this] {
+            std::vector<int> banks;
+            for (int b = 0; b < bankToggles.size(); ++b)
+                if (bankToggles[b]->getToggleState()) banks.push_back(b);
+            auto go = onGo;
+            const bool p = progs.getToggleState(), m = mixesT.getToggleState();
+            if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) dw->exitModalState(0);
+            if (go && !banks.empty() && (p || m)) go(banks, p, m);
+        };
+        cancelBtn.onClick = [this] {
+            if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) dw->exitModalState(0);
+        };
+        estimate.setColour(juce::Label::textColourId, theme::dim);
+        addAndMakeVisible(estimate);
+        updateEstimate();
+        setSize(460, 250 + ((n + 2) / 3) * 30);
+    }
+    void paint(juce::Graphics& g) override {
+        g.fillAll(theme::panel);
+        theme::drawCaption(g, {16, banksY, 200, 18}, "Banks", juce::Justification::centredLeft);
+        theme::drawCaption(g, {16, whatY, 200, 18}, "What to read", juce::Justification::centredLeft);
+    }
+    void resized() override {
+        auto r = getLocalBounds().reduced(16);
+        intro.setBounds(r.removeFromTop(44));
+        banksY = r.getY() + 2;
+        r.removeFromTop(24);
+        const int rows = (bankToggles.size() + 2) / 3;
+        auto grid = r.removeFromTop(rows * 30);
+        for (int i = 0; i < bankToggles.size(); ++i)
+            bankToggles[i]->setBounds(grid.getX() + (i % 3) * (grid.getWidth() / 3), grid.getY() + (i / 3) * 30, grid.getWidth() / 3, 28);
+        auto row = r.removeFromTop(30);
+        allMain.setBounds(row.removeFromLeft(190));
+        row.removeFromLeft(8);
+        none.setBounds(row.removeFromLeft(80));
+        r.removeFromTop(8);
+        whatY = r.getY();
+        r.removeFromTop(22);
+        row = r.removeFromTop(28);
+        progs.setBounds(row.removeFromLeft(140));
+        mixesT.setBounds(row.removeFromLeft(140));
+        estimate.setBounds(r.removeFromTop(24));
+        auto b = r.removeFromBottom(34);
+        cancelBtn.setBounds(b.removeFromRight(100));
+        b.removeFromRight(8);
+        readBtn.setBounds(b.removeFromRight(120));
+    }
+
+private:
+    void updateEstimate() {
+        int banks = 0;
+        for (auto* t : bankToggles) banks += t->getToggleState();
+        const int seconds = banks * ((progs.getToggleState() ? 40 : 0) + (mixesT.getToggleState() ? 25 : 0));
+        estimate.setText(banks == 0 ? "Pick at least one bank." : "About " + juce::String(juce::jmax(1, seconds / 60)) + (seconds < 120 ? " minute." : " minutes."),
+                         juce::dontSendNotification);
+        readBtn.setEnabled(banks > 0 && (progs.getToggleState() || mixesT.getToggleState()));
+    }
+    juce::Label intro, estimate;
+    int banksY = 0, whatY = 0;
+    juce::OwnedArray<juce::ToggleButton> bankToggles;
+    juce::ToggleButton progs{"Programs"}, mixesT{"Mixes"};
+    juce::TextButton allMain{"User, Presets and GenMIDI"}, none{"None"}, readBtn{"Read"}, cancelBtn{"Cancel"};
+    std::function<void(std::vector<int>, bool, bool)> onGo;
+};
+
 // Reads every program of one or more banks.
 // User: opcode 01 per program (fast). Other banks: program change, then ask for the edit buffer (opcode 03).
 // The QS needs a moment to load a program; if the answer is still the previous program, ask again.
@@ -22,16 +173,22 @@ public:
         auto& midi = session.midi;
         const int total = int(banks.size()) * 128;
         int doneCount = 0;
+        // What the QS has in its edit buffer before we start, so the first program of a bank can be checked against
+        // something (a stale answer would otherwise be taken for program 0). Kept across banks for the same reason.
+        std::optional<qs::Program> prev;
         if (std::any_of(banks.begin(), banks.end(), [](int b) { return b != 0; })) {
             midi.send(qs::modeSelect(0));
             session.programModeSent = true;
             wait(100);
+            midi.clearQueue();
+            midi.send(qs::editProgramRequest(0));
+            if (auto r = midi.waitFor([](const qs::Bytes& m) { return qs::opcodeOf(m) == qs::EditProgramDump; }, 1500, this))
+                prev = qs::Program::fromDump(*r);
         }
         for (int bank : banks) {
             if (threadShouldExit()) break;
             auto& out = results[bank];
-            int got = 0, sameAsPrevious = 0;
-            std::optional<qs::Program> prev;
+            int got = 0, sameAsPrevious = 0, retries = 0;
             for (int p = 0; p < 128 && !threadShouldExit(); ++p) {
                 setStatusMessage(bankTitle(bank) + ": program " + juce::String(p + 1) + " of 128");
                 std::optional<qs::Program> prog;
@@ -53,8 +210,9 @@ public:
                         if (!r) continue;
                         prog = qs::Program::fromDump(*r);
                         // Still the previous program? The QS hadn't switched yet: wait and ask again.
-                        if (prog && prev && p > 0 && prog->bytes() == prev->bytes() && attempt < 3) {
-                            wait(150);
+                        if (prog && prev && prog->bytes() == prev->bytes() && attempt < 3) {
+                            ++retries;
+                            wait(150 + 100 * attempt);
                             continue;
                         }
                         break;
@@ -80,10 +238,13 @@ public:
                 setProgress(double(++doneCount) / total);
             }
             counts[bank] = got;
+            log.add(bankTitle(bank) + ": " + juce::String(got) + " of 128 programs, " + juce::String(retries) + " re-asks, " +
+                    juce::String(sameAsPrevious) + " identical to the one before");
         }
     }
 
     void threadComplete(bool) override {
+        writeReadLog("programs", banks.size(), log, problems);
         juce::StringArray summary;
         for (int bank : banks) {
             const int got = counts[bank];
@@ -93,10 +254,10 @@ public:
                 session.library.source[size_t(bank)] = "your " + (session.deviceName.isNotEmpty() ? session.deviceName : juce::String("QS")) +
                                                        " (read " + juce::Time::getCurrentTime().formatted("%Y-%m-%d") + ")";
             }
-            summary.add(bankTitle(bank) + ": " + juce::String(got) + " of 128");
+            summary.add(bankTitle(bank) + ": " + juce::String(got) + " of 128 programs" + (got == 128 ? "" : (got == 0 ? "  (not read)" : "  (incomplete)")));
         }
         session.library.save();
-        if (onDone) onDone(summary.joinIntoString(", ") + (problems.isEmpty() ? "" : "\n\n" + problems.joinIntoString("\n")));
+        if (onDone) onDone(summary.joinIntoString("\n") + (problems.isEmpty() ? "" : "\n\n" + problems.joinIntoString("\n")));
         delete this;
     }
 
@@ -110,7 +271,7 @@ private:
     std::vector<int> banks;
     std::map<int, std::array<std::optional<qs::Program>, 128>> results;
     std::map<int, int> counts;
-    juce::StringArray problems;
+    juce::StringArray problems, log;
     std::function<void(juce::String)> onDone;
 };
 
@@ -155,11 +316,17 @@ public:
                 wait(150);
             }
         }
+        qs::Bytes prev;  // kept across banks, and seeded with the mix the QS is on, so mix 0 of a bank is checked too
+        if (needSelect && session.globalKnown) {
+            midi.clearQueue();
+            midi.send(qs::mixRequest(100));
+            if (auto r = midi.waitFor([](const qs::Bytes& m) { return qs::opcodeOf(m) == qs::NewMixDump || qs::opcodeOf(m) == qs::OldMixDump; }, 1500, this))
+                prev = payload(*r);
+        }
         for (int bank : banks) {
             if (threadShouldExit()) break;
             auto& out = results[bank];
             int got = 0, same = 0;
-            qs::Bytes prev;
             for (int n = 0; n < 100 && !threadShouldExit(); ++n) {
                 setStatusMessage(bankTitle(bank) + ": mix " + juce::String(n + 1) + " of 100");
                 std::optional<qs::Bytes> msg;
@@ -183,8 +350,8 @@ public:
                         midi.send(qs::mixRequest(100));
                         msg = midi.waitFor(isMix(100), 1500, this);
                         if (!msg) continue;
-                        if (n > 0 && !prev.empty() && payload(*msg) == prev && attempt < 3) {  // not switched yet
-                            wait(150);
+                        if (!prev.empty() && payload(*msg) == prev && attempt < 3) {  // not switched yet
+                            wait(150 + 100 * attempt);
                             continue;
                         }
                         break;
@@ -210,6 +377,7 @@ public:
                 setProgress(double(++doneCount) / total);
             }
             counts[bank] = got;
+            log.add(bankTitle(bank) + ": " + juce::String(got) + " of 100 mixes, " + juce::String(same) + " identical to the one before");
         }
         // Put the QS back the way it was.
         if (changedSelect) {
@@ -224,6 +392,7 @@ public:
     }
 
     void threadComplete(bool) override {
+        writeReadLog("mixes", banks.size(), log, problems);
         juce::StringArray summary;
         for (int bank : banks) {
             const int got = counts[bank];
@@ -233,12 +402,12 @@ public:
                 session.library.mixSource[size_t(bank)] = "your " + (session.deviceName.isNotEmpty() ? session.deviceName : juce::String("QS")) +
                                                           " (read " + juce::Time::getCurrentTime().formatted("%Y-%m-%d") + ")";
             }
-            summary.add(bankTitle(bank) + ": " + juce::String(got) + " of 100 mixes");
+            summary.add(bankTitle(bank) + ": " + juce::String(got) + " of 100 mixes" + (got == 100 ? "" : (got == 0 ? "  (not read)" : "  (incomplete)")));
         }
         if (changedSelect)
             problems.add("MIDI Program Select was set to channel " + juce::String(session.channel) + " during the read and has been put back.");
         session.library.save();
-        if (onDone) onDone(summary.joinIntoString(", ") + (problems.isEmpty() ? "" : "\n\n" + problems.joinIntoString("\n")));
+        if (onDone) onDone(summary.joinIntoString("\n") + (problems.isEmpty() ? "" : "\n\n" + problems.joinIntoString("\n")));
         delete this;
     }
 
@@ -249,7 +418,7 @@ private:
     std::vector<int> banks;
     std::map<int, std::array<qs::Bytes, 100>> results;
     std::map<int, int> counts;
-    juce::StringArray problems;
+    juce::StringArray problems, log;
     int originalSelect = 1;
     bool changedSelect = false;
     std::function<void(juce::String)> onDone;
@@ -368,7 +537,13 @@ LibraryTab::LibraryTab(Session& s) : session(s) {
     const char* mainBanks[] = {"User", "Preset 1", "Preset 2", "Preset 3", "GenMIDI", "Card"};
     for (int b = 0; b < 6; ++b) {
         auto* btn = bankButtons.add(new juce::TextButton(mainBanks[b]));
-        btn->onClick = [this, b] { showBank(b < 5 ? b : kFirstCardBank + cardBankBox.getSelectedId() - 1); };
+        btn->onClick = [this, b] {
+            const int target = b < 5 ? b : kFirstCardBank + cardBankBox.getSelectedId() - 1;
+            if (b == 5 && session.cardState == Session::CardState::Unknown && session.midi.isOpen() && !cardAnyway.getToggleState())
+                probeCard([this, target] { showBank(target); });  // first visit: check there's a card
+            else
+                showBank(target);
+        };
         addAndMakeVisible(btn);
     }
     bankButtons[5]->setTooltip("Banks on the inserted card(s). A RAM512 has 8 banks; a sound QCard usually has 1.");
@@ -390,12 +565,32 @@ LibraryTab::LibraryTab(Session& s) : session(s) {
     list.setWantsKeyboardFocus(true);
     addAndMakeVisible(list);
 
-    for (juce::Component* c : std::initializer_list<juce::Component*>{&prevBtn, &nextBtn, &readBtn, &readAllBtn, &importFolderBtn, &importOneBtn,
-                                                                    &editBtn, &sendBtn, &storeBtn, &factoryLink, &sourceLabel})
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&prevBtn, &nextBtn, &readBtn, &importFolderBtn, &importOneBtn, &loadNote,
+                                                                    &editBtn, &storeBtn, &factoryLink, &sourceLabel})
         addAndMakeVisible(c);
     addChildComponent(copyToCardBtn);
-    addAndMakeVisible(convertBtn);
-    convertBtn.onClick = [this] { convertBankFile(); };
+    addChildComponent(sendBtn);
+    addChildComponent(cardCheckBtn);
+    addChildComponent(cardAnyway);
+    readBtn.setButtonText("Read from the synth...");
+    importOneBtn.setButtonText("Load one .syx file into the list...");
+    importFolderBtn.setButtonText("Load a folder of .syx files...");
+    editBtn.setButtonText("Edit this program");
+    storeBtn.setButtonText("Copy it to a User slot on the QS...");
+    sendBtn.setButtonText("Hear the file's version (not stored)");
+    copyToCardBtn.setButtonText("Put a whole bank on this card...");
+    loadNote.setText("Loading a file only fills this list. Nothing is sent to the synth.", juce::dontSendNotification);
+    loadNote.setFont(theme::uiFont(12.5f));
+    loadNote.setColour(juce::Label::textColourId, theme::dim);
+    loadNote.setJustificationType(juce::Justification::topLeft);
+    cardCheckBtn.onClick = [this] { probeCard(nullptr); };
+    cardCheckBtn.setTooltip("Asks the QS whether a card is in. Power the QS off before inserting a card.");
+    cardAnyway.setToggleState(settings().getBoolValue("cardsWithoutCheck", false), juce::dontSendNotification);
+    cardAnyway.setTooltip("For cards QS Studio doesn't recognise, or setups where the check doesn't work. The QS ignores card banks with no card in.");
+    cardAnyway.onClick = [this] {
+        settings().setValue("cardsWithoutCheck", cardAnyway.getToggleState());
+        updateCardButtons();
+    };
     convertBtn.setTooltip("Rewrites a bank file (for example your QS6 Send All backup) so each program points at the same-named samples "
                           "on the other model. Saves a new .syx and a report of every change and every sample with no match.");
     copyToCardBtn.onClick = [this] { copyBankToCard(); };
@@ -403,14 +598,7 @@ LibraryTab::LibraryTab(Session& s) : session(s) {
                              "loads the bank you pick, tells you which buttons to press on the QS, checks the card, then restores your User bank.");
     prevBtn.onClick = [this] { step(-1); };
     nextBtn.onClick = [this] { step(1); };
-    readBtn.onClick = [this] {
-        if (mixView) readMixes({bank});
-        else readBanks({bank});
-    };
-    readAllBtn.onClick = [this] {
-        if (mixView) readMixes({0, 1, 2, 3, 4});
-        else readBanks({0, 1, 2, 3, 4});
-    };
+    readBtn.onClick = [this] { chooseWhatToRead(); };
     for (auto* b : {&progViewBtn, &mixViewBtn}) {
         b->setClickingTogglesState(false);
         b->setConnectedEdges(b == &progViewBtn ? juce::Button::ConnectedOnRight : juce::Button::ConnectedOnLeft);
@@ -429,15 +617,16 @@ LibraryTab::LibraryTab(Session& s) : session(s) {
 
     prevBtn.setTooltip("Previous program");
     nextBtn.setTooltip("Next program");
-    readBtn.setTooltip("Asks the QS for every program in the bank shown, so the names appear here. Takes about 40 seconds for a Preset bank. "
-                       "Names are kept in QSStudio.library, so you only do this once.");
+    readBtn.setTooltip("Choose banks, then QS Studio asks the synth for their programs and/or mixes and keeps a copy here. "
+                       "About 40 seconds a bank for programs. You only need to do it once.");
     readAllBtn.setTooltip("Reads User, Preset 1-3 and GenMIDI in one go (a few minutes). Nothing on the QS is changed.");
     importFolderBtn.setTooltip("Fills banks here from .syx files in a folder (for example the Alesis factory banks). "
                                "You choose which file goes to which bank. Only QS Studio's list changes; nothing is sent to the QS.");
     importOneBtn.setTooltip("Fills the bank shown here from one .syx file, so you can browse its names and open its programs in the editor. "
                             "Only QS Studio's list changes; nothing is sent to the QS. To write a bank to the QS, use Backup & Restore.");
-    editBtn.setTooltip("Selects the program on the QS and loads it into the Program Editor (Enter or double-click does the same).");
-    sendBtn.setTooltip("Plays this program on the QS by sending it to the edit buffer. Nothing is stored; selecting another program discards it.");
+    editBtn.setTooltip("Selects the program on the QS and opens it in the Program Editor (Enter or double-click does the same).");
+    sendBtn.setTooltip("This program came from a .syx file, so the synth's own program in this slot may be different. This plays the file's "
+                       "version on the synth without storing it; picking another program puts things back.");
     storeBtn.setTooltip("Saves this program permanently into one of the QS's 128 User program slots, replacing what was there. "
                         "Use it to copy a Preset or card program into your User bank.");
     factoryLink.setColour(juce::HyperlinkButton::textColourId, theme::accent);
@@ -458,9 +647,8 @@ void LibraryTab::showBank(int b) {
     if (b >= kFirstCardBank) cardBankBox.setSelectedId(b - kFirstCardBank + 1, juce::dontSendNotification);
     for (int i = 0; i < bankButtons.size(); ++i)
         bankButtons[i]->setToggleState(i < 5 ? i == b : b >= kFirstCardBank, juce::dontSendNotification);
-    readBtn.setButtonText("Read " + bankTitle(b) + (mixView ? " mixes" : "") + " from QS");
-    readAllBtn.setButtonText(mixView ? "Read the mixes of all banks" : "Read all banks from QS");
     copyToCardBtn.setVisible(b >= kFirstCardBank);
+    updateCardButtons();
     rebuildRows();
     updateLcd();
 }
@@ -468,6 +656,7 @@ void LibraryTab::showBank(int b) {
 void LibraryTab::refresh() {
     rebuildRows();
     updateLcd();
+    updateCardButtons();
 }
 
 void LibraryTab::rebuildRows() {
@@ -500,6 +689,7 @@ void LibraryTab::rebuildRows() {
     else
         text = juce::String(n) + " of " + juce::String(count()) + " " + what + " known.";
     sourceLabel.setText(text + "  Saved for your " + session.library.model + ".", juce::dontSendNotification);
+    updateProgramButtons();
 }
 
 void LibraryTab::selectProgram(int prog) {
@@ -517,6 +707,7 @@ void LibraryTab::selectProgram(int prog) {
 
 void LibraryTab::updateLcd() {
     if (!panel) return;
+    panel->setModel(session.panelModel());
     panel->sync();
     // What the synth's own display would show (QS6: "PROG PRESET1 00" / "GrandPiano Ch01"; QSR: number, name, "Bank: Preset1").
     FrontPanel::Display d;
@@ -563,6 +754,7 @@ void LibraryTab::selectedRowsChanged(int row) {
     if (suppressSend || row < 0 || row >= int(rows.size())) return;
     pendingSelect = rows[size_t(row)];
     if (panel) panel->sync();
+    updateProgramButtons();
     startTimer(90);  // debounce while arrowing through the list
 }
 
@@ -595,6 +787,7 @@ void LibraryTab::setMixView(bool mix, bool switchQs) {
     progViewBtn.setToggleState(!mix, juce::dontSendNotification);
     mixViewBtn.setToggleState(mix, juce::dontSendNotification);
     for (auto* b : {&editBtn, &sendBtn, &storeBtn}) b->setEnabled(!mix);
+    editBtn.setButtonText(mix ? "Edit this mix (coming later)" : "Edit this program");
     if (panel) panel->setMixMode(mix);
     showBank(bank);
     if (!switchQs || !session.midi.isOpen()) return;
@@ -661,8 +854,9 @@ void LibraryTab::readMixes(std::vector<int> banks) {
     }
     (new ReadMixesJob(session, std::move(banks), [this](juce::String result) {
         refresh();
-        if (session.setStatus) session.setStatus("Read from QS: " + result.upToFirstOccurrenceOf("\n", false, false));
-        if (result.contains("\n")) alert("Read mixes from QS", result);
+        if (session.setStatus) session.setStatus("Read mixes from the synth. Details in QS Studio Data/Logs.");
+        alert("Read from the synth", (pendingReport.isNotEmpty() ? pendingReport + "\n\n" : juce::String()) + result);
+        pendingReport.clear();
     }))->launchThread();
 }
 
@@ -681,15 +875,70 @@ bool LibraryTab::keyPressed(const juce::KeyPress& k) {
     return false;
 }
 
-void LibraryTab::readBanks(std::vector<int> banks) {
+// Only programs that came from a .syx file can differ from what's in the synth, so only they get "hear the file's version".
+void LibraryTab::updateProgramButtons() {
+    const int p = selectedProgram();
+    const bool fromFile = !mixView && p >= 0 && p < 128 && session.library.programs[size_t(bank)][size_t(p)].has_value() &&
+                          !session.library.source[size_t(bank)].startsWith("your ");
+    sendBtn.setVisible(fromFile);
+}
+
+void LibraryTab::updateCardButtons() {
+    const bool allowed = session.cardState != Session::CardState::Absent || cardAnyway.getToggleState();
+    bankButtons[5]->setEnabled(allowed);
+    cardBankBox.setEnabled(allowed);
+    cardCheckBtn.setVisible(session.cardState == Session::CardState::Absent && session.midi.isOpen());
+    cardAnyway.setVisible(session.cardState == Session::CardState::Absent || cardAnyway.getToggleState());
+    bankButtons[5]->setTooltip(allowed ? juce::String("Banks on the inserted card(s). A RAM512 has 8 banks; a sound QCard usually has 1.")
+                                       : juce::String("No card found in the QS. Power it off, insert a card, then click Check for a card."));
+}
+
+void LibraryTab::probeCard(std::function<void()> thenIfFound) {
+    if (!session.midi.isOpen()) return;
+    (new CardProbeJob(session, [this, thenIfFound](int r) {
+        session.cardState = r == 1 ? Session::CardState::Present : r == 0 ? Session::CardState::Absent : Session::CardState::Unknown;
+        updateCardButtons();
+        if (r == 1 && thenIfFound) thenIfFound();
+        if (session.setStatus)
+            session.setStatus(r == 1 ? "Card found." : r == 0 ? "No card in the QS: card banks are greyed out." : "The QS didn't answer the card check.");
+    }))->launchThread();
+}
+
+void LibraryTab::chooseWhatToRead() {
+    // QS_STUDIO_UI_TEST lets the dialog open without a synth, for screenshots of the layout.
+    if (!session.midi.isOpen() && juce::SystemStats::getEnvironmentVariable("QS_STUDIO_UI_TEST", {}).isEmpty()) {
+        alert("Not connected", "Connect to the QS on the Connection page first.");
+        return;
+    }
+    const bool cards = session.cardState == Session::CardState::Present || cardAnyway.getToggleState();
+    juce::DialogWindow::LaunchOptions o;
+    o.content.setOwned(new ReadChooser(bank, mixView, cards, [this](std::vector<int> banks, bool programs, bool mixes) {
+        if (programs)
+            readBanks(banks, mixes ? std::function<void()>([this, banks] { readMixes(banks); }) : std::function<void()>());
+        else
+            readMixes(banks);
+    }));
+    o.dialogTitle = "Read from the synth";
+    o.dialogBackgroundColour = theme::panel;
+    o.useNativeTitleBar = true;
+    o.resizable = false;
+    o.launchAsync();
+}
+
+void LibraryTab::readBanks(std::vector<int> banks, std::function<void()> then) {
     if (!session.midi.isOpen()) {
         alert("Not connected", "Connect to the QS on the Connection page first.");
         return;
     }
-    (new ReadBanksJob(session, std::move(banks), [this](juce::String result) {
+    (new ReadBanksJob(session, std::move(banks), [this, then](juce::String result) {
         refresh();
-        if (session.setStatus) session.setStatus("Read from QS: " + result.upToFirstOccurrenceOf("\n", false, false));
-        if (result.contains("\n")) alert("Read from QS", result);
+        if (session.setStatus) session.setStatus("Read programs from the synth. Details in QS Studio Data/Logs.");
+        if (then) {  // more to read (mixes): show this report when everything is done
+            pendingReport = result;
+            then();
+        } else {
+            alert("Read from the synth", result);
+        }
     }))->launchThread();
 }
 
@@ -1026,6 +1275,10 @@ void LibraryTab::paint(juce::Graphics& g) {
     auto r = getLocalBounds().reduced(14);
     r.removeFromTop(panel->getHeight() + 6);
     theme::drawCaption(g, r.removeFromTop(18).removeFromLeft(140), "Bank", juce::Justification::centredLeft);
+    const int rx = readBtn.getX(), rw = readBtn.getWidth();
+    theme::drawCaption(g, {rx, sectionNames, rw, 18}, "Names in the list", juce::Justification::centredLeft);
+    theme::drawCaption(g, {rx, sectionThis, rw, 18}, mixView ? "This mix" : "This program", juce::Justification::centredLeft);
+    if (copyToCardBtn.isVisible()) theme::drawCaption(g, {rx, sectionCard, rw, 18}, "This card", juce::Justification::centredLeft);
 }
 
 void LibraryTab::resized() {
@@ -1054,14 +1307,29 @@ void LibraryTab::resized() {
     sourceLabel.setBounds(r.removeFromBottom(40));
     r.removeFromBottom(4);
     list.setBounds(r);
-    for (auto* b : {&readBtn, &readAllBtn, &importFolderBtn, &importOneBtn}) {
+    // Right column, in labelled groups (captions are painted).
+    right.removeFromTop(20);
+    sectionNames = right.getY() - 20;
+    readBtn.setBounds(right.removeFromTop(34));
+    right.removeFromTop(6);
+    for (auto* b : {&importOneBtn, &importFolderBtn}) {
         b->setBounds(right.removeFromTop(34));
         right.removeFromTop(6);
     }
-    factoryLink.setBounds(right.removeFromTop(22));
-    right.removeFromTop(16);
-    for (auto* b : {&editBtn, &sendBtn, &storeBtn, &convertBtn, &copyToCardBtn}) {
+    loadNote.setBounds(right.removeFromTop(34));
+    factoryLink.setBounds(right.removeFromTop(20));
+    right.removeFromTop(18);
+    sectionThis = right.getY();
+    right.removeFromTop(20);
+    for (auto* b : {&editBtn, &storeBtn, &sendBtn}) {
         b->setBounds(right.removeFromTop(34));
         right.removeFromTop(6);
     }
+    right.removeFromTop(12);
+    sectionCard = right.getY();
+    right.removeFromTop(20);
+    copyToCardBtn.setBounds(right.removeFromTop(34));
+    // Under the bank buttons: card check and the "use anyway" option.
+    cardCheckBtn.setBounds(left.removeFromTop(36).withTrimmedTop(6));
+    cardAnyway.setBounds(left.removeFromTop(48).withTrimmedTop(4));
 }

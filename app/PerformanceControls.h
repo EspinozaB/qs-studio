@@ -57,7 +57,7 @@ public:
         g.fillRoundedRectangle(housing, 6.0f);
         g.setColour(juce::Colours::black);
         g.drawRoundedRectangle(housing, 6.0f, 1.0f);
-        g.setColour(hw::silk());
+        g.setColour(juce::Colour(0xffd2d5d9));  // the strip is always black, whatever the panel colour
         g.setFont(theme::uiFont(9.5f, true));
         const bool one = session.hasOneControllerSlider();
         auto label = [&](juce::Component& c, const juce::String& t) {
@@ -66,11 +66,15 @@ public:
         label(pitch, "PITCH");
         label(mod, "MODULATION");
         label(volume, "VOLUME");
+        // The QS6.2 / QS8.2 print what the sliders do by default: Filter, Delay, Envelope, Reverb.
+        const bool silver = session.panelModel().endsWith(".2");
+        static const char* silverNames[] = {"FILTER", "DELAY", "ENVELOPE", "REVERB"};
         for (int i = 0; i < 4; ++i)
-            if (ctrl[i]->isVisible()) label(*ctrl[i], one ? "CONTROLLER A" : "CTRL " + juce::String::charToString(juce::juce_wchar('A' + i)));
+            if (ctrl[i]->isVisible())
+                label(*ctrl[i], one ? juce::String("CONTROLLER A") : silver ? juce::String(silverNames[i]) : "CTRL " + juce::String::charToString(juce::juce_wchar('A' + i)));
         if (one) {
             g.setFont(theme::uiFont(8.5f, true));
-            g.setColour(hw::silk().withAlpha(0.7f));
+            g.setColour(juce::Colour(0xffd2d5d9).withAlpha(0.7f));
             g.drawText("EDIT VALUE", juce::Rectangle<int>(ctrl[0]->getX() - 2, getHeight() - 12, ctrl[0]->getWidth() + 4, 10), juce::Justification::centred);
         }
     }

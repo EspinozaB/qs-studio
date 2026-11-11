@@ -33,8 +33,12 @@ private:
     void rebuildRows();
     void updateLcd();
     int selectedProgram() const;
-    void readBanks(std::vector<int> banks);
+    void readBanks(std::vector<int> banks, std::function<void()> then = nullptr);
     void readMixes(std::vector<int> banks);
+    void chooseWhatToRead();
+    void probeCard(std::function<void()> thenIfFound);
+    void updateCardButtons();
+    void updateProgramButtons();
     void selectMixOnQs(int mix);
     int count() const;
     juce::String nameAt(int n) const;
@@ -56,6 +60,8 @@ private:
     int pendingSelect = -1;
     bool suppressSend = false;
     bool mixView = false, askedProgramSelect = false;
+    juce::String pendingReport;
+    int sectionNames = 0, sectionThis = 0, sectionCard = 0;  // y of the right-column captions
 
     std::unique_ptr<FrontPanel> panel;
     juce::OwnedArray<juce::TextButton> bankButtons;  // User, Preset 1-3, GenMIDI, Card
@@ -65,7 +71,9 @@ private:
     juce::TextButton prevBtn{"<"}, nextBtn{">"}, readBtn{"Read this bank from QS"}, readAllBtn{"Read all banks from QS"},
         importFolderBtn{"Import a folder of .syx banks..."}, importOneBtn{"Import a .syx into this bank..."}, editBtn{"Open in editor"},
         sendBtn{"Audition (send to QS, don't store)"}, storeBtn{"Store to User..."}, copyToCardBtn{"Copy a bank onto this card bank..."},
-        convertBtn{"Convert a bank file QS6 <-> QSR..."}, progViewBtn{"Programs"}, mixViewBtn{"Mixes"};
+        convertBtn{"Convert a bank file QS6 <-> QSR..."}, progViewBtn{"Programs"}, mixViewBtn{"Mixes"}, cardCheckBtn{"Check for a card"};
+    juce::ToggleButton cardAnyway{"Use card banks without a card check"};
+    juce::Label loadNote;
     juce::HyperlinkButton factoryLink{"Get the Alesis factory banks (.syx)",
                                       juce::URL("https://github.com/jzemeocala/Alesis-Archive-Project/tree/HEAD/BANKS/FACTORY")};
     juce::Label sourceLabel;

@@ -321,7 +321,6 @@ void CardTab::resized() {
 // ---------- Main window ----------
 namespace {
 constexpr int kStripH = 176;  // bottom strip: wheels, faders and keyboard
-bool looksLikeQs6(const juce::String& model) { return model.startsWith("QS6") || model.startsWithIgnoreCase("QuadraSynth"); }
 }  // namespace
 
 MainComponent::MainComponent() {
@@ -344,49 +343,36 @@ MainComponent::MainComponent() {
     own(globalPage);
     own(backup);
 
+    // Help is kept to a few short lines per page: what to click, in order. Details live in the tooltips.
     pages = {
         {"Play", "Programs",
-         "Browse every bank, click a program to hear it on the QS, and send, store or copy programs.",
-         "1. Pick a bank on the left. User is the bank you can change; Preset 1-3 and GenMIDI are fixed; Card banks are on a "
-         "PCMCIA card.\n"
-         "2. Click a program: the QS switches to it, so you can play it from the keyboard below or your own controller. "
-         "Up/Down arrow keys step through programs.\n"
-         "The front panel works like the synth's. QS6: a group key (00-120) picks the tens and 0-9 the ones, VALUE steps "
-         "programs, BANK steps banks, PAGE changes the MIDI channel. QSR: turn VALUE (drag or mouse wheel); CURSOR moves it "
-         "to the bank, MIDI CH to the channel. Hover any key to see what it does on the hardware.\n"
-         "3. Programs / Mixes (or PROGRAM / MIX on the panel) switches the list. Factory names are built in; Read this bank gets "
-         "yours from the QS, or import .syx files. The line under the list says where the names came from.\n"
-         "4. Audition sends a program into the QS's edit buffer to try it without storing. Store to User writes it to a User slot.",
+         "Pick a bank, click a program and the synth plays it.",
+         "- Click a program, or use the panel keys like on the synth (hover a key to see what it does).\n"
+         "- Programs / Mixes switches the list.\n"
+         "- Read from the synth (right) gets your own names; the factory ones are already there.",
          "Browse banks and play programs", library},
         {"Edit", "Program Editor",
-         "Edit the program that's in the QS's edit buffer. Every change is sent as you make it, so you hear it right away.",
-         "1. Open a program from the Programs page, or click Get from QS to load whatever the QS is playing.\n"
-         "2. Each of the 4 sounds has a card with its main settings. Click a section to see all its settings.\n"
-         "3. Changes are only in the edit buffer. Click Store to keep them in a User slot on the QS, or Save .syx to keep them on this computer.",
+         "Change the program the synth is playing. You hear every change straight away.",
+         "- Open a program from the Programs page, or click Get from QS.\n"
+         "- Changes aren't kept until you click Store to User (or Save .syx).",
          "Edit programs live", editor},
         {"Transfer", "Backup & Restore",
-         "Save the synth's User programs, mixes, effects and Global settings to one file, or put a saved file back.",
-         "A backup asks the QS to send everything you can change (what the manual calls Send All Data To MIDI) and saves it as a "
-         ".syx file. It doesn't change anything on the QS.\n"
-         "Restoring sends that file back and replaces the QS's User programs, mixes and effects. Global settings are left alone "
-         "unless you tick the box.\n"
-         "Backups are saved in the Backups folder next to QS Studio unless you choose another place.",
+         "Save everything you can change on the synth to one file, or put a saved file back.",
+         "- Back up now: saves User programs, mixes, effects and Global settings. Changes nothing on the synth.\n"
+         "- Restore: replaces the synth's User programs, mixes and effects with the file's.",
          "Save or restore everything in User memory", backup},
         {"Transfer", juce::String(juce::CharPointer_UTF8("Move banks QS6 \xe2\x86\x94 QSR")),
          "Move programs between a QS6 and a QS7, QS8 or QSR without them playing the wrong samples.",
-         "The two families of synth have different sample ROMs, numbered differently. Follow the three steps: back up, convert, then "
-         "restore or copy to a card. The report lists every sample that changed and any the other synth doesn't have.",
+         "- Back up, convert, then restore or put on a card: the three steps below, in order.\n"
+         "- The report lists every sample that changed.",
          "Convert banks between the QS6 and QS7/QS8/QSR sample sets", move},
         {"Transfer", "Cards & ROM",
          "Look inside card images, read and write FLASH sample cards, and save the built-in sample ROM.",
-         "Card images (.img) hold samples, programs and mixes. You can export the samples as WAVs.\n"
-         "Program cards (RAM512) are handled on the Programs page (Card banks) and Move Banks page instead.",
+         "- Program cards (RAM512) are on the Programs page under Card.",
          "PCMCIA sound cards and the internal sample ROM", own(new CardTab(session.midi))},
         {"Capture", "Record & Sample",
-         "Record the QS's audio output through your audio interface, or sample every note of a program automatically.",
-         "1. Pick the audio input the QS's outputs are connected to (1 or 2 channels).\n"
-         "2. Turn on monitoring to hear it through your computer.\n"
-         "3. Record by hand, or use Auto-sample to play and record each note into its own WAV file.",
+         "Record the synth through your audio interface, or sample every note of a program.",
+         "- Pick the input in step 1, then record by hand or auto-sample.",
          "Record audio and auto-sample programs", own(new RecorderTab(session))},
         {"Setup", "Connection",
          "Connect QS Studio to your synth over MIDI. Both directions are needed.",
@@ -394,9 +380,7 @@ MainComponent::MainComponent() {
          "MIDI ports and synth detection", connection},
         {"Setup", "Global Settings",
          "MIDI settings stored in the synth: controller numbers, Program Select and General MIDI mode.",
-         "QS Studio needs MIDI Program Select set to On (or to your channel) to switch programs.\n"
-         "Controller A-D send the MIDI CC numbers set here. The QS6 has only the Controller A slider; use the sliders on this page "
-         "for B, C and D.",
+         "- Program Select must not be Off, or QS Studio can't change programs.",
          "Controller numbers, Program Select, General MIDI", globalPage},
     };
     std::vector<Sidebar::Item> items;
@@ -432,12 +416,20 @@ MainComponent::MainComponent() {
     pill.setTooltip("Click to open the Connection page");
     addAndMakeVisible(pill);
     lookBox.addItem("Match the synth", 1);
-    lookBox.addItem("QS6", 2);
-    lookBox.addItem("QS7 / QS8 / QSR", 3);
-    lookBox.setSelectedId(settings().getIntValue("panelLook", 1), juce::dontSendNotification);
-    lookBox.setTooltip("Colours and front panel of QS Studio. \"Match the synth\" follows the model that's connected (or was last connected).");
+    for (int i = 0; i < Session::panelModels().size(); ++i) lookBox.addItem(Session::panelModels()[i], i + 2);
+    {
+        const auto saved = settings().getValue("panelModel");
+        const int idx = Session::panelModels().indexOf(saved.isNotEmpty() ? saved
+                                                                          : (settings().getIntValue("panelLook", 1) == 2 ? juce::String("QS6")
+                                                                             : settings().getIntValue("panelLook", 1) == 3 ? juce::String("QSR")
+                                                                                                                             : juce::String()));
+        lookBox.setSelectedId(idx >= 0 ? idx + 2 : 1, juce::dontSendNotification);
+    }
+    lookBox.setTooltip("Which synth's front panel, sliders and keyboard QS Studio shows. \"Match the synth\" follows the model that's "
+                       "connected (or was last connected).");
     lookBox.onChange = [this] {
-        settings().setValue("panelLook", lookBox.getSelectedId());
+        const int id = lookBox.getSelectedId();
+        settings().setValue("panelModel", id >= 2 ? Session::panelModels()[id - 2] : juce::String("match"));
         settings().saveIfNeeded();
         applyLook();
     };
@@ -562,15 +554,12 @@ void MainComponent::showPage(int index) {
 }
 
 void MainComponent::applyLook() {
-    const int look = lookBox.getSelectedId();
-    const auto model = session.deviceName.isNotEmpty() ? session.deviceName : settings().getValue("lastModel", "QSR");
-    const bool qs6 = look == 2 || (look == 1 && looksLikeQs6(model));
-    theme::applyStyle(qs6 ? theme::Style::QS6 : theme::Style::QSR);
+    theme::applyStyle(session.panelStyle());
     if (auto* lf = dynamic_cast<theme::LookAndFeel*>(&juce::LookAndFeel::getDefaultLookAndFeel())) lf->refresh();
     sendLookAndFeelChange();
-    // The QS6 has 61 keys (C to C); the rack and the QS7/QS8 views get the full 88.
-    if (qs6) keyboard.setAvailableRange(36, 96);
-    else keyboard.setAvailableRange(21, 108);
+    // The model's own key range: QS6 family 61 keys, QS7 76, QS8 and the QSR 88.
+    const auto keys = session.keyRange();
+    keyboard.setAvailableRange(keys.getStart(), keys.getEnd());
     perf.updateLayout();
     resized();
     if (library) {
@@ -599,6 +588,7 @@ void MainComponent::sysexReceived(const qs::Bytes& msg) {
         connection->refreshFiles();
         statusLabel.setText("Connected to " + session.deviceName, juce::dontSendNotification);
         session.programModeSent = false;
+        session.cardState = Session::CardState::Unknown;  // a different synth may have a different card
         library->applySavedImports(true);  // fill empty banks from the .syx folder the user imported before
         perf.updateLayout();
         applyLook();

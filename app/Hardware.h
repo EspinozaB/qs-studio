@@ -7,8 +7,8 @@
 
 namespace hw {
 
-// Printed panel lettering (light grey on both the QS6 and the QSR).
-inline juce::Colour silk() { return juce::Colour(0xffd2d5d9); }
+// Printed panel lettering: light grey on the black panels, dark blue-grey on the silver QS6.2 / QS8.2.
+inline juce::Colour silk() { return theme::currentStyle == theme::Style::Silver ? juce::Colour(0xff28304a) : juce::Colour(0xffd2d5d9); }
 // The QS6 prints the EDIT MODE key legends (VALUE, EDIT SELECT, STORE, PAGE) in light blue.
 inline juce::Colour qs6Blue() { return juce::Colour(0xff6fb6e4); }
 inline juce::Colour panelBlack() { return juce::Colour(0xff151618); }
@@ -267,6 +267,7 @@ public:
         }
     }
     bool small = false;      // QSR-style compact button
+    bool pill = false;       // QS6.2 / QS8.2 rounded keys
     juce::Colour legend;     // printed lettering; transparent = the panel's silk colour
     bool split = false;      // one wide key with arrows at both ends (QSR CURSOR, MIDI CH): see side()
     int side() const { return lastSide; }  // -1 if the left half was pressed, +1 for the right half
@@ -278,7 +279,7 @@ public:
 
     void paintButton(juce::Graphics& g, bool over, bool down) override {
         auto r = getLocalBounds().toFloat().reduced(1.5f);
-        const float corner = small ? 3.0f : 4.0f;
+        const float corner = pill ? getHeight() * 0.45f : small ? 3.0f : 4.0f;
         if (lit) {
             g.setColour(theme::accent.withAlpha(0.35f));
             g.fillRoundedRectangle(r.expanded(1.5f), corner + 1.5f);

@@ -3,21 +3,23 @@
 A modern, portable toolkit for the Alesis QS6 / QS7 / QS8 / QSR. One `.exe`, no installer, no registry, nothing in AppData:
 everything it saves goes in a `QS Studio Data` folder next to the program.
 
-**Status: 0.4.0 pre-alpha.** Only being tested by the author so far. See [Versions](#versions).
+**Status: 0.4.1 pre-alpha.** Only being tested by the author so far. See [Versions](#versions).
 
 ## What it does
 
 The window works like a hardware editor: pages in a sidebar grouped by job, a plain-language summary at the top of each page and a
 **How this works** button with step-by-step help. The look follows the synth, and the panels are drawn to match the hardware:
 
-- **QS6:** the keyboard's panel left to right: EDIT MODE (VALUE up/down, EDIT SELECT, STORE, PAGE / PROGRAM CHANNEL SELECT),
-  the green LCD, PLAY MODE (MIX, PROGRAM, BANK), the 13 group keys and 0-9 with the Direct Select labels printed above and below them
-  (Mix, Effects, Program; Keyboard Sound, Drum Sound, Mix, from the QS6 manual). The strip below has the pitch and mod wheels, VOLUME
-  and CONTROLLER A (EDIT VALUE), and a 61-key keyboard.
-- **QSR:** the 1U rack face: PHONES and VOLUME, the LCD, the VALUE knob, CURSOR / EDIT / MIDI CH / STORE, MIX / PROG / bank DOWN / UP,
-  the two card slots and POWER. CURSOR and MIDI CH move what the VALUE knob changes, like on the unit. The strip has wheels, VOLUME and
-  Controllers A-D.
+- **QS6, QS6.1, QS7, QS8 (and the .1 versions):** the black keyboard panel left to right: EDIT MODE (VALUE up/down, EDIT SELECT,
+  STORE, PAGE / PROGRAM CHANNEL SELECT), the 2 x 16 character LCD, PLAY MODE (MIX, PROGRAM, BANK with COMPARE / GLOBAL), the 13 group
+  keys and 0-9 with the Direct Select labels printed above and below them (from the QS6 manual). The strip below has the pitch and
+  mod wheels, VOLUME and CONTROLLER A on the QS6 (A-D on the others), and the model's keyboard: 61 keys (QS6 family), 76 (QS7), 88 (QS8).
+- **QS6.2, QS8.2:** the silver panel with the blue key blocks either side of the LCD, rounded keys, SEQ SELECT and TRANSPOSE (shown,
+  not active yet); the sliders are labelled Filter, Delay, Envelope, Reverb.
+- **QSR:** the 1U rack face: PHONES and VOLUME, the LCD (big number, two lines, MIX / EDIT / 1-16 indicators), the VALUE knob,
+  CURSOR / EDIT / MIDI CH / STORE, MIX / PROG / bank DOWN / UP, the two card slots and POWER. CURSOR and MIDI CH work like on the unit.
 
+Model names are shown in plain text, not as the maker's logos.
 Change it under **Panel look**.
 
 | Page | What it does |

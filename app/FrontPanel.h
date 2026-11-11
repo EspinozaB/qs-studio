@@ -89,7 +89,12 @@ public:
         cursorKey.setTooltip("CURSOR: left moves the cursor to the bank, right to the program number. The VALUE knob changes that field.");
         midiChKey.onClick = [this] { if (act.stepChannel) act.stepChannel(midiChKey.side()); };
         midiChKey.setTooltip("MIDI CH: left / right changes the MIDI channel");
-        for (auto* k : {&valueUp, &valueDown, &pageLeft, &pageRight, &editKey, &storeKey}) k->legend = hw::qs6Blue();
+        seqKey.setEnabled(false);
+        transposeKey.setEnabled(false);
+        seqKey.setTooltip("SEQ SELECT (QS6.2 / QS8.2): not available in QS Studio yet");
+        transposeKey.setTooltip("TRANSPOSE (QS6.2 / QS8.2): not available in QS Studio yet");
+        addChildComponent(seqKey);
+        addChildComponent(transposeKey);
         for (juce::Component* k : std::initializer_list<juce::Component*>{&mixKey, &progKey, &editKey, &storeKey, &bankDown, &bankUp, &valueUp,
                                                                          &valueDown, &pageLeft, &pageRight, &cursorKey, &midiChKey})
             addChildComponent(k);
@@ -108,47 +113,61 @@ public:
         volumeKnob.onChange = [this](int v) { volume = v; };
         volume.addListener(this);
         addChildComponent(volumeKnob);
-        setStyle(theme::currentStyle);
+        setModel("QSR");
         startTimer(530);  // cursor blink on the QSR display
     }
     ~FrontPanel() override { volume.removeListener(this); }
 
     Target knobTarget() const { return target; }
-    bool isQs6() const { return style == theme::Style::QS6; }
+    enum class Layout { Classic, Silver, Rack };  // QS6/6.1/7/8 keyboards, QS6.2/8.2, QSR
+    bool isRack() const { return layout == Layout::Rack; }
 
     void setDisplay(const Display& d) {
         display = d;
         repaint();
     }
 
-    void setStyle(theme::Style s) {
-        style = s;
-        const bool qs6 = isQs6();
-        for (auto* k : groupKeys) k->setVisible(qs6);
-        for (auto* k : digitKeys) k->setVisible(qs6);
-        for (juce::Component* k : std::initializer_list<juce::Component*>{&valueUp, &valueDown, &pageLeft, &pageRight}) k->setVisible(qs6);
-        for (juce::Component* k : std::initializer_list<juce::Component*>{&cursorKey, &midiChKey, &valueKnob, &volumeKnob}) k->setVisible(!qs6);
+    void setModel(const juce::String& m) {
+        if (m == model && built) return;
+        built = true;
+        model = m;
+        layout = m == "QSR" ? Layout::Rack : m.endsWith(".2") ? Layout::Silver : Layout::Classic;
+        const bool rack = layout == Layout::Rack, silver = layout == Layout::Silver, classic = layout == Layout::Classic;
+        for (auto* k : groupKeys) k->setVisible(!rack);
+        for (auto* k : digitKeys) k->setVisible(!rack);
+        for (juce::Component* k : std::initializer_list<juce::Component*>{&valueUp, &valueDown, &pageLeft, &pageRight}) k->setVisible(!rack);
+        for (juce::Component* k : std::initializer_list<juce::Component*>{&cursorKey, &midiChKey, &valueKnob, &volumeKnob}) k->setVisible(rack);
+        for (juce::Component* k : std::initializer_list<juce::Component*>{&seqKey, &transposeKey}) k->setVisible(silver);
         for (juce::Component* k : std::initializer_list<juce::Component*>{&mixKey, &progKey, &editKey, &storeKey, &bankDown, &bankUp}) k->setVisible(true);
-        for (auto* k : {&mixKey, &progKey, &editKey, &storeKey, &bankDown, &bankUp, &cursorKey, &midiChKey}) k->small = !qs6;
-        // QS6: EDIT MODE legends are blue; QSR: all white.
-        for (auto* k : {&editKey, &storeKey}) k->legend = qs6 ? hw::qs6Blue() : juce::Colour();
-        progKey.setLabel(qs6 ? "PROGRAM" : "PROG");
-        editKey.setLabel(qs6 ? "EDIT SELECT" : "EDIT");
-        bankDown.setLabel(qs6 ? juce::String(juce::CharPointer_UTF8("\xe2\x97\x80 BANK")) : "DOWN", qs6 ? juce::String() : "COMPARE");
-        bankUp.setLabel(qs6 ? juce::String(juce::CharPointer_UTF8("BANK \xe2\x96\xb6")) : "UP", qs6 ? juce::String() : "GLOBAL");
+        for (auto* k : allKeys()) {
+            k->small = rack;
+            k->pill = silver;
+            k->legend = silver ? juce::Colour(0xfff2f4f8) : juce::Colour();  // black keys with white print on the silver panel
+        }
+        // The black keyboards print the EDIT MODE legends in blue.
+        if (classic)
+            for (auto* k : {&valueUp, &valueDown, &pageLeft, &pageRight, &editKey, &storeKey}) k->legend = hw::qs6Blue();
+        progKey.setLabel(rack ? "PROG" : "PROGRAM");
+        editKey.setLabel(classic ? "EDIT SELECT" : "EDIT");
+        bankDown.setLabel(rack ? juce::String("DOWN") : juce::String(juce::CharPointer_UTF8("\xe2\x97\x80 BANK")), rack ? "COMPARE" : "");
+        bankUp.setLabel(rack ? juce::String("UP") : juce::String(juce::CharPointer_UTF8("BANK \xe2\x96\xb6")), rack ? "GLOBAL" : "");
+        valueUp.setLabel(juce::String(juce::CharPointer_UTF8("\xe2\x96\xb2 VALUE")));
+        valueDown.setLabel(juce::String(juce::CharPointer_UTF8("VALUE \xe2\x96\xbc")));
+        pageLeft.setLabel(juce::String(juce::CharPointer_UTF8("\xe2\x97\x80 PAGE")));
+        pageRight.setLabel(juce::String(juce::CharPointer_UTF8("PAGE \xe2\x96\xb6")));
         cursorKey.setLabel(juce::String(juce::CharPointer_UTF8("\xe2\x97\x80 CURSOR \xe2\x96\xb6")));
         midiChKey.setLabel(juce::String(juce::CharPointer_UTF8("\xe2\x97\x80 MIDI CH \xe2\x96\xb6")));
-        if (qs6) target = Target::Program;
+        if (!rack) target = Target::Program;
         resized();
         repaint();
     }
+    const juce::String& getModel() const { return model; }
 
     // Height for a given width, keeping the panel's proportions.
     int heightForWidth(int w) const { return juce::roundToInt(logicalH() * juce::jmin(1.0f, float(w) / kW)); }
 
     // Call when the program, bank, channel or style changes.
     void sync() {
-        if (theme::currentStyle != style) setStyle(theme::currentStyle);
         const int p = current();
         for (int i = 0; i < groupKeys.size(); ++i) {
             groupKeys[i]->setLit(i == p / 10);
@@ -172,25 +191,27 @@ public:
     void paint(juce::Graphics& g) override {
         juce::Graphics::ScopedSaveState save(g);
         g.addTransform(transform());
-        if (isQs6()) paintQs6(g);
+        if (layout == Layout::Classic) paintQs6(g);
+        else if (layout == Layout::Silver) paintSilver(g);
         else paintQsr(g);
     }
 
     void mouseUp(const juce::MouseEvent& e) override {
-        if (isQs6()) return;
+        if (!isRack()) return;
         const auto p = e.position.transformedBy(transform().inverted());
         if (slots.contains(p))
             if (act.showCards) act.showCards();
     }
 
     void resized() override {
-        if (isQs6()) layoutQs6();
+        if (layout == Layout::Classic) layoutQs6();
+        else if (layout == Layout::Silver) layoutSilver();
         else layoutQsr();
     }
 
 private:
     static constexpr float kW = 1200.0f;
-    float logicalH() const { return isQs6() ? 214.0f : 128.0f; }
+    float logicalH() const { return layout == Layout::Classic ? 214.0f : layout == Layout::Silver ? 206.0f : 128.0f; }
     juce::AffineTransform transform() const {
         const float s = juce::jmin(1.0f, float(getWidth()) / kW);
         return juce::AffineTransform::scale(s).translated((float(getWidth()) - kW * s) / 2.0f, 0.0f);
@@ -199,7 +220,7 @@ private:
         c.setBounds(juce::Rectangle<float>(x, y, w, h).transformedBy(transform()).toNearestInt());
     }
     void timerCallback() override {
-        if (!isQs6()) {
+        if (layout != Layout::Classic) {
             blink = !blink;
             repaint(lcdArea.transformedBy(transform()).getSmallestIntegerContainer());
         }
@@ -258,7 +279,7 @@ private:
                              juce::Colour cell, int cursorRow = -1, int cursorCol = -1, int cursorLen = 0) {
         const int nRows = int(rows.size());
         const float cw = area.getWidth() / float(cols), rh = area.getHeight() / float(nRows);
-        g.setFont(theme::monoFont(rh * 0.78f));
+        g.setFont(theme::monoFont(juce::jmin(rh * 0.78f, cw * 1.55f)));  // fit the cell whichever way is tighter
         int row = 0;
         for (const auto& text : rows) {
             for (int c = 0; c < cols; ++c) {
@@ -295,8 +316,9 @@ private:
 
     // QSR: big number on the left, two 16-character text lines, and MIX / EDIT / channel 1-16 indicators along the bottom
     // (as drawn in the QSR supplement). The cursor (CURSOR key) underlines the field the VALUE knob changes.
-    void drawQsrLcd(juce::Graphics& g, juce::Rectangle<float> glass) const {
-        const auto bg = juce::Colour(0xffc2cf72), ink = juce::Colour(0xff1d2610), faint = juce::Colour(0xffb5c467);
+    void drawQsrLcd(juce::Graphics& g, juce::Rectangle<float> glass, bool silver = false) const {
+        const auto bg = silver ? juce::Colour(0xffa6d846) : juce::Colour(0xffc2cf72), ink = juce::Colour(0xff1d2610),
+                   faint = silver ? juce::Colour(0xff9bcc3f) : juce::Colour(0xffb5c467);
         g.setColour(bg);
         g.fillRoundedRectangle(glass, 2.0f);
         g.setGradientFill(juce::ColourGradient(juce::Colours::white.withAlpha(0.15f), glass.getX(), glass.getY(), juce::Colours::transparentBlack,
@@ -305,10 +327,11 @@ private:
         auto r = glass.reduced(7.0f, 5.0f);
         auto bottom = r.removeFromBottom(10.0f);
         // Big number.
-        auto digitsArea = r.removeFromLeft(r.getHeight() * 1.25f);
-        const int digits = display.mix ? 2 : 3;
+        auto digitsArea = r.removeFromLeft(r.getHeight() * (silver ? 0.95f : 1.25f));
+        // QSR: zero-padded (000 / 00). QS6.2 / QS8.2: no leading zeros (the photo shows "8").
+        const juce::String num = silver ? juce::String(display.number) : juce::String(display.number).paddedLeft('0', display.mix ? 2 : 3);
+        const int digits = num.length();
         const float dw = digitsArea.getWidth() / 3.0f;
-        const juce::String num = juce::String(display.number).paddedLeft('0', digits);
         for (int i = 0; i < 3; ++i) {
             const int idx = i - (3 - digits);
             const int dgt = idx >= 0 ? num[idx] - '0' : -1;
@@ -319,10 +342,12 @@ private:
             g.fillRect(digitsArea.getX(), digitsArea.getBottom() - 2.0f, digitsArea.getWidth() * 0.92f, 1.6f);
         }
         r.removeFromLeft(6.0f);
-        const juce::String name = "\"" + (display.name.isNotEmpty() ? display.name.substring(0, 10) : juce::String("----------")) + "\"";
-        const juce::String bankText = display.bankQsr.substring(0, 11);
-        const juce::String line2 = "Bank:" + bankText.paddedLeft(' ', 11);
-        drawCharRows(g, r, {name, line2}, 16, ink, faint, target == Target::Bank && blink ? 1 : -1, 16 - bankText.length(), bankText.length());
+        const juce::String nm = display.name.isNotEmpty() ? display.name.substring(0, 10) : juce::String("----------");
+        const juce::String name = silver ? nm : "\"" + nm + "\"";
+        const juce::String bankText = (silver ? display.bank : display.bankQsr).substring(0, 11);
+        const juce::String line2 = silver ? "BANK: " + bankText : "Bank:" + bankText.paddedLeft(' ', 11);
+        drawCharRows(g, r, {name, line2}, 16, ink, faint, target == Target::Bank && blink ? 1 : -1, silver ? 6 : 16 - bankText.length(),
+                     bankText.length());
         // Indicators: MIX, EDIT, then channels 1-16 (the current one shown).
         g.setFont(theme::uiFont(7.0f, true));
         auto ind = bottom;
@@ -437,8 +462,94 @@ private:
         }
         // Model name, where the QS6 has its logo (plain text, not the logo).
         const float mx = kGridX + 10 * kCellW + 100;
-        plainModel(g, "QS6", {mx, kDigitY - 4, kW - 14 - mx, 34}, 30.0f);
+        plainModel(g, model, {mx, kDigitY - 4, kW - 14 - mx, 34}, 30.0f);
         label(g, "64 VOICE EXPANDABLE SYNTHESIZER", {mx, kDigitY + 30, kW - 14 - mx, 9}, 6.0f, juce::Justification::centredLeft, 0.7f);
+    }
+
+    // ---------------- QS6.2 / QS8.2 ----------------
+    // Panel units: 1200 x 206, from a photo of a QS6.2: silver panel, blue key blocks either side of the LCD,
+    // rounded black keys.
+    static constexpr float sGridX = 612, sCell = 40.0f, sGroupY = 70, sDigitY = 110, sKeyH = 26;
+
+    void layoutSilver() {
+        place(valueUp, 72, 40, 52, 24);
+        place(pageLeft, 26, 66, 52, 24);
+        place(pageRight, 118, 66, 52, 24);
+        place(valueDown, 72, 92, 52, 24);
+        place(editKey, 176, 42, 44, 26);
+        place(storeKey, 176, 92, 44, 26);
+        place(mixKey, 508, 40, 52, 24);
+        place(bankDown, 470, 66, 56, 24);
+        place(bankUp, 540, 66, 56, 24);
+        place(progKey, 500, 100, 68, 26);
+        for (int i = 0; i < 13; ++i) place(*groupKeys[i], sGridX + i * sCell, sGroupY, sCell - 4, sKeyH + 4);
+        for (int d = 0; d < 10; ++d) place(*digitKeys[d], sGridX + d * sCell, sDigitY, sCell - 4, sKeyH);
+        place(seqKey, sGridX + 11 * sCell, sDigitY, sCell - 4, sKeyH);
+        place(transposeKey, sGridX + 12 * sCell, sDigitY, sCell - 4, sKeyH);
+        lcdArea = {232, 28, 222, 104};  // the QS6.2's window is small for its text; drawn as wide as the panel allows
+    }
+
+    void paintSilver(juce::Graphics& g) const {
+        const juce::Rectangle<float> panel(0, 0, kW, logicalH());
+        g.setGradientFill(juce::ColourGradient(juce::Colour(0xffd3d6db), 0, 0, juce::Colour(0xffaeb2b9), 0, panel.getBottom(), false));
+        g.fillRoundedRectangle(panel, 10.0f);
+        g.setColour(juce::Colours::white.withAlpha(0.5f));
+        g.drawHorizontalLine(1, 10, kW - 10);
+        g.setColour(juce::Colour(0xff8d9199));
+        g.drawRoundedRectangle(panel.reduced(0.5f), 10.0f, 1.0f);
+        // Blue key blocks.
+        auto blueBlock = [&](juce::Rectangle<float> r) {
+            g.setGradientFill(juce::ColourGradient(juce::Colour(0xff3d72d8), r.getX(), r.getY(), juce::Colour(0xff1f4fae), r.getX(), r.getBottom(), false));
+            g.fillRoundedRectangle(r, 8.0f);
+            g.setColour(juce::Colours::black.withAlpha(0.25f));
+            g.drawRoundedRectangle(r, 8.0f, 1.0f);
+        };
+        blueBlock({16, 32, 214, 100});
+        blueBlock({460, 32, 146, 100});
+        auto white = [&](const juce::String& t, juce::Rectangle<float> r, float size) {
+            g.setColour(juce::Colours::white.withAlpha(0.9f));
+            g.setFont(theme::uiFont(size, true));
+            g.drawFittedText(t, r.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+        };
+        white("MIX/PROG/EFFECTS", {166, 70, 64, 9}, 6.0f);
+        white("COMPARE", {470, 91, 56, 8}, 6.0f);
+        white("GLOBAL", {540, 91, 56, 8}, 6.0f);
+        label(g, juce::String(juce::CharPointer_UTF8("\xe2\x97\x80  MIDI/MIX CHANNEL  \xe2\x96\xb6")), {30, 136, 180, 10}, 7.0f);
+        // LCD in a black window.
+        auto win = lcdArea;
+        g.setColour(juce::Colour(0xff0a0b0c));
+        g.fillRoundedRectangle(win, 4.0f);
+        drawQsrLcd(g, win.reduced(6.0f, 12.0f), true);
+        label(g, "MODE", {win.getX() + 10, win.getBottom() + 2, 40, 8}, 6.5f);
+        label(g, "MIDI CHANNEL", {win.getX() + 70, win.getBottom() + 2, 130, 8}, 6.5f);
+        // Direct Select labels: three rows above the group keys, three below 0-9.
+        const char* const* above[] = {kMixFn, kFxFn, kProgFn};
+        const char* aboveNames[] = {"MIX", "EFFECTS", "PROGRAM"};
+        for (int row = 0; row < 3; ++row) {
+            const float y = 28.0f + row * 12.5f;
+            for (int i = 0; i < 13; ++i) small(g, above[row][i], {sGridX + i * sCell, y, sCell - 4, 10});
+            g.setColour(hw::silk().withAlpha(0.35f));
+            g.drawHorizontalLine(int(y + 10.5f), sGridX, sGridX + 13 * sCell - 4);
+            label(g, juce::String(juce::CharPointer_UTF8("\xe2\x96\xb6 ")) + aboveNames[row], {sGridX + 13 * sCell + 2, y, kW - 6 - (sGridX + 13 * sCell + 2), 10},
+                  7.0f, juce::Justification::centredLeft);
+        }
+        const char* belowNames[] = {"KEYBOARD SOUND", "DRUM SOUND", "MIX"};
+        for (int row = 0; row < 3; ++row) {
+            const float y = sDigitY + sKeyH + 6 + row * 11.5f;
+            for (int d = 0; d < 10; ++d) {
+                const juce::String t = row == 0 ? juce::String(kSoundFn[d]) : (row == 1 ? juce::String("DRUM ") : juce::String("CHANNEL ")) + juce::String(d + 1);
+                small(g, t, {sGridX + d * sCell, y, sCell - 4, 10});
+            }
+            g.setColour(hw::silk().withAlpha(0.35f));
+            g.drawHorizontalLine(int(y - 1.0f), sGridX, sGridX + 10 * sCell - 4);
+            label(g, juce::String(juce::CharPointer_UTF8("\xe2\x96\xb6 ")) + belowNames[row], {sGridX + 10 * sCell + 2, y, 92, 10}, 7.0f,
+                  juce::Justification::centredLeft);
+        }
+        // Model name in plain text where the logo is, with the descriptive line under it.
+        g.setColour(juce::Colour(0xff1f4fae));
+        g.setFont(theme::uiFont(30.0f, true).withHorizontalScale(1.1f));
+        g.drawText(model, juce::Rectangle<float>(1010, 150, 176, 32), juce::Justification::centredRight);
+        label(g, "64 VOICE SYNTHESIZER WITH FLASH ROM EXPANSION", {880, 184, 306, 9}, 6.0f, juce::Justification::centredRight, 0.8f);
     }
 
     // ---------------- QSR ----------------
@@ -541,13 +652,23 @@ private:
     juce::Value& volume;
     Actions act;
     Display display;
-    theme::Style style = theme::Style::QSR;
+    juce::String model;
+    Layout layout = Layout::Rack;
+    bool built = false;
     Target target = Target::Program;
     bool mixMode = false, blink = true;
     juce::Rectangle<float> lcdArea, slots;
     juce::OwnedArray<hw::Key> groupKeys, digitKeys;
     hw::Key mixKey{"MIX"}, progKey{"PROGRAM"}, editKey{"EDIT SELECT"}, storeKey{"STORE"}, bankDown{"BANK"}, bankUp{"BANK"}, valueUp{"VALUE"},
-        valueDown{"VALUE"}, pageLeft{"PAGE"}, pageRight{"PAGE"}, cursorKey{"CURSOR"}, midiChKey{"MIDI CH"};
+        valueDown{"VALUE"}, pageLeft{"PAGE"}, pageRight{"PAGE"}, cursorKey{"CURSOR"}, midiChKey{"MIDI CH"}, seqKey{"SEQ", "SELECT"},
+        transposeKey{"TRANS-", "POSE"};
+    std::vector<hw::Key*> allKeys() {
+        std::vector<hw::Key*> v{&mixKey, &progKey, &editKey, &storeKey, &bankDown, &bankUp, &valueUp, &valueDown, &pageLeft, &pageRight,
+                                &cursorKey, &midiChKey, &seqKey, &transposeKey};
+        for (auto* k : groupKeys) v.push_back(k);
+        for (auto* k : digitKeys) v.push_back(k);
+        return v;
+    }
     hw::Encoder valueKnob;
     hw::Knob volumeKnob{0, 127, 127};
 };

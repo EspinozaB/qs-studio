@@ -10,6 +10,7 @@
 #include "../core/qs_program.h"
 #include "../core/qs_samples.h"
 #include "MidiLink.h"
+#include "Theme.h"
 
 juce::File settingsDir();      // "QS Studio Data" beside the program: every file QS Studio writes goes here
 juce::File appFolder();
@@ -240,14 +241,35 @@ struct Session : private juce::MidiKeyboardState::Listener, private juce::MidiIn
         const auto model = (deviceName.isNotEmpty() ? deviceName : settings().getValue("lastModel", "QSR")).upToFirstOccurrenceOf(" ", false, false);
         return qs::romSetForModel(model.toStdString());
     }
-    // The original QS6 has one assignable slider (Controller A); the QS6.1 and later have four (A-D).
-    // Follows the Panel look when it's set to a model, otherwise the connected (or last connected) synth.
-    bool hasOneControllerSlider() const {
-        const int look = settings().getIntValue("panelLook", 1);
-        if (look == 2) return true;
-        if (look == 3) return false;
-        const auto model = deviceName.isNotEmpty() ? deviceName : settings().getValue("lastModel", "QSR");
-        return model.upToFirstOccurrenceOf(" ", false, false) == "QS6";
+    // The models QS Studio draws a panel for, in the Panel look menu's order.
+    static const juce::StringArray& panelModels() {
+        static const juce::StringArray m{"QS6", "QS6.1", "QS7", "QS7.1", "QS8", "QS8.1", "QS6.2", "QS8.2", "QSR"};
+        return m;
+    }
+    // The model whose panel is shown: the Panel look setting, or the connected (or last connected) synth.
+    juce::String panelModel() const {
+        auto chosen = settings().getValue("panelModel");
+        if (chosen.isEmpty()) {  // settings from before 0.4.1 stored a number
+            const int old = settings().getIntValue("panelLook", 1);
+            chosen = old == 2 ? "QS6" : old == 3 ? "QSR" : "";
+        }
+        if (panelModels().contains(chosen)) return chosen;
+        const auto key = Library::modelKey(deviceName.isNotEmpty() ? deviceName : settings().getValue("lastModel", "QSR"));
+        if (panelModels().contains(key)) return key;
+        return key.startsWith("QS") && !key.startsWith("QSR") ? juce::String("QS6") : juce::String("QSR");  // QuadraSynth and unknown keyboards
+    }
+    theme::Style panelStyle() const {
+        const auto m = panelModel();
+        return m == "QSR" ? theme::Style::QSR : m.endsWith(".2") ? theme::Style::Silver : theme::Style::QS6;
+    }
+    // Only the original QS6 has a single assignable slider (Controller A); the QS6.1 and every later model has four (A-D).
+    bool hasOneControllerSlider() const { return panelModel() == "QS6"; }
+    // The keyboard's range: QS6 family 61 keys, QS7 76 keys, QS8 and the QSR (any controller) 88.
+    juce::Range<int> keyRange() const {
+        const auto m = panelModel();
+        if (m.startsWith("QS6")) return {36, 96};
+        if (m.startsWith("QS7")) return {28, 103};
+        return {21, 108};
     }
 
     // Hooks set by MainComponent so tabs can hand work to each other.
@@ -259,6 +281,8 @@ struct Session : private juce::MidiKeyboardState::Listener, private juce::MidiIn
     int currentBank = 0, currentProgram = 0;
     int currentMixBank = 0, currentMix = 0;
     bool mixModeSent = false;  // the QS was put in Mix mode by us
+    enum class CardState { Unknown, Present, Absent };
+    CardState cardState = CardState::Unknown;  // checked the first time card banks are opened after connecting
     juce::Value volume{juce::var(127)};  // Volume slider/knob (sent as CC7); shared by the strip and the QSR panel
 
     void setChannel(int ch) {

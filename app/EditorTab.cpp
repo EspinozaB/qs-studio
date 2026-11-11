@@ -44,18 +44,42 @@ const std::vector<Section>& sections() {
 
 // ---------------- ParamControl ----------------
 
+// MIDI note as the QS shows it: 0 = C-2, 60 = C3, 127 = G8.
+static juce::String noteName(int n) {
+    static const char* names[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    return juce::String(names[((n % 12) + 12) % 12]) + juce::String(n / 12 - 2);
+}
+
 juce::String ParamControl::valueLabel(const qs::ParamDef& d, int raw) {
     const int v = raw + d.offset;
     if (nameHas(d.name, "waveform")) {
         juce::String n = qs::lfoWaveName(raw);
         return n.isNotEmpty() ? n : juce::String(raw);
     }
-    if (nameHas(d.name, "sample group")) {
+    if (nameHas(d.name, "sample group")) {  // the name alone fits the menu; QS Edit Pro shows it the same way
         juce::String n = qs::sampleGroupName(raw);
-        return n.isNotEmpty() ? juce::String(raw) + " " + n : "Group " + juce::String(raw);
+        return n.isNotEmpty() ? n : "Group " + juce::String(raw);
     }
     if (nameHas(d.name, "effect bus")) return "Bus " + juce::String(raw + 1);
-    if (nameHas(d.name, "velocity curve")) return "Curve " + juce::String(raw + 1);
+    // Names from the QS6 manual (Program Edit chapter).
+    if (nameHas(d.name, "velocity curve")) {
+        static const char* curves[] = {"Linear", "Inverted", "Maximum", "Minimum", "1 of 2", "2 of 2", "1 of 3",
+                                       "2 of 3", "3 of 3",   "1 of 4",  "2 of 4",  "3 of 4", "4 of 4"};
+        return raw >= 0 && raw < 13 ? juce::String(curves[raw]) : "Curve " + juce::String(raw + 1);
+    }
+    if (nameHas(d.name, "key mode")) {
+        static const char* modes[] = {"Mono", "Poly", "1-Pitch", "1-PMono"};
+        return raw >= 0 && raw < 4 ? juce::String(modes[raw]) : juce::String(raw);
+    }
+    if (nameHas(d.name, "portamento mode")) {
+        static const char* modes[] = {"Exponential", "Linear", "1 Speed"};
+        return raw >= 0 && raw < 3 ? juce::String(modes[raw]) : juce::String(raw);
+    }
+    if (juce::String(d.name) == "Output") {
+        static const char* outs[] = {"Main", "Aux", "Off"};
+        return raw >= 0 && raw < 3 ? juce::String(outs[raw]) : juce::String(raw);
+    }
+    if (nameHas(d.name, "note limit") || juce::String(d.name) == "Note number") return noteName(raw);
     if (nameHas(d.name, "pan")) return raw == 3 ? juce::String("C") : (raw < 3 ? "L" + juce::String(3 - raw) : "R" + juce::String(raw - 3));
     if (d.bits == 1) return raw ? "On" : "Off";
     return juce::String(v);
@@ -187,6 +211,14 @@ void SoundPanel::load(const qs::Program& p) {
 
 void SoundPanel::paint(juce::Graphics& g) {
     theme::drawPanel(g, getLocalBounds().toFloat(), enabled, "SOUND " + juce::String(sound + 1) + (isDrum ? "  (drum kit)" : ""));
+    // Like QS Edit Pro's strip header: what this sound plays, where on the keyboard, and how.
+    const auto summary = editor.soundSummary(sound);
+    if (summary.isNotEmpty()) {
+        auto r = getLocalBounds().reduced(12, 10).removeFromTop(26).withTrimmedLeft(isDrum ? 170 : 86).withTrimmedRight(isDrum ? 180 : 66);
+        g.setColour(enabled ? theme::accent : theme::dim);
+        g.setFont(theme::uiFont(13.5f, true));
+        g.drawFittedText(summary, r, juce::Justification::centredLeft, 1, 0.8f);
+    }
 }
 
 void SoundPanel::resized() {
@@ -298,6 +330,23 @@ void EditorTab::updateLcd() {
                                            (awaitingDump ? juce::String("   WAITING FOR QS...") : juce::String())});
 }
 
+juce::String EditorTab::soundSummary(int sound) const {
+    if (prog.isDrum(sound)) return {};
+    auto val = [&](const char* name) {
+        const int i = qs::findKeyboardParam(name);
+        return i >= 0 ? prog.raw(sound, qs::keyboardParam(i), 0) : 0;
+    };
+    const int group = val("Sample group"), number = val("Sample number");
+    const auto rs = session.romSet();
+    juce::String sample = number == 0 ? juce::String("No sample") : juce::String(qs::sampleName(rs, false, group, number));
+    if (sample.isEmpty()) sample = "Sample " + juce::String(number);
+    const juce::String groupName = qs::sampleGroupName(group);
+    static const char* modes[] = {"Mono", "Poly", "1-Pitch", "1-PMono"};
+    const int km = val("Key mode");
+    return sample + (groupName.isNotEmpty() ? "  (" + groupName + ")" : juce::String()) + "   " + noteName(val("Low note limit")) + " to " +
+           noteName(val("High note limit")) + "   " + (km >= 0 && km < 4 ? modes[km] : "");
+}
+
 void EditorTab::attachLabels(ParamControl& c) {
     const bool isGroup = nameHas(c.def.name, "sample group"), isNumber = nameHas(c.def.name, "sample number");
     if (!isGroup && !isNumber) return;
@@ -320,6 +369,7 @@ void EditorTab::attachLabels(ParamControl& c) {
             g = &qs::keyboardParam(qs::findKeyboardParam("Sample group"));
         }
         const int group = g ? prog.raw(sound, *g, drumSound ? drum : 0) : 0;
+        if (raw == 0) return "00  (no sample)";
         const juce::String name = qs::sampleName(rs, drumSound, group, raw);
         return juce::String(raw).paddedLeft('0', 2) + (name.isNotEmpty() ? "  " + name : juce::String());
     };
@@ -327,6 +377,7 @@ void EditorTab::attachLabels(ParamControl& c) {
 
 void EditorTab::paramChanged(int sound, const qs::ParamDef& d, int drum, int value) {
     prog.setValue(sound, d, value, drum);
+    if (sound >= 0 && sound < panels.size()) panels[sound]->repaint();  // its header names the sample
     const bool drumParam = prog.isDrum(sound);
     if (drumParam) {
         dumpDirty = true;

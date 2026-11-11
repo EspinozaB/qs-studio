@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(QSStudio VERSION 0.4.0 LANGUAGES C CXX)
+project(QSStudio VERSION 0.4.1 LANGUAGES C CXX)
 # Release stage shown with the version: pre-alpha, alpha, beta, rc.1 ... and "" for a final release. See README "Versions".
 set(QS_STAGE "pre-alpha")
 

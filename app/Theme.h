@@ -9,13 +9,19 @@ inline juce::Colour bg{0xff1c1d1f}, panel{0xff26272a}, panelHi{0xff2f3034}, line
     dim{0xffa3a6ab}, accent{0xff74dc9c}, accentDim{0xff3f7a57}, warn{0xffe2a94b}, bad{0xffe0675a},
     lcdBg{0xff5e9a6c}, lcdInk{0xff17301f}, bezel{0xff0d0e0f};
 
-enum class Style { QS6, QSR };
+// QS6: the black keyboards (QS6, QS6.1, QS7, QS8 and their .1 versions). QSR: the black rack.
+// Silver: the QS6.2 / QS8.2, silver panel with blue key blocks.
+enum class Style { QS6, QSR, Silver };
 inline Style currentStyle = Style::QSR;
 
-// QS6: black keyboard panel with a yellow-green backlit LCD. QS7/QS8/QSR: black rack panel with a grey-blue LCD.
 inline void applyStyle(Style s) {
     currentStyle = s;
-    if (s == Style::QS6) {
+    if (s == Style::Silver) {
+        accent = juce::Colour(0xff5d9bf0);
+        accentDim = juce::Colour(0xff2a4d86);
+        lcdBg = juce::Colour(0xffa3d83c);
+        lcdInk = juce::Colour(0xff142008);
+    } else if (s == Style::QS6) {
         accent = juce::Colour(0xffa6d65c);
         accentDim = juce::Colour(0xff55702f);
         lcdBg = juce::Colour(0xffa7c43c);
