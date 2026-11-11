@@ -13,11 +13,11 @@
       <stop offset="0" stop-color="#2a2b2e"/><stop offset="0.5" stop-color="#8e9196"/><stop offset="1" stop-color="#2a2b2e"/>
     </linearGradient>
     <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#74dc9c" stop-opacity="0.35"/><stop offset="1" stop-color="#74dc9c" stop-opacity="0"/>
+      <stop offset="0" stop-color="#ffb21f" stop-opacity="0.75"/><stop offset="1" stop-color="#ff5a00" stop-opacity="0"/>
     </radialGradient>
   </defs>
   <rect x="32" y="32" width="960" height="960" rx="200" fill="url(#bg)"/>
-  <ellipse cx="512" cy="430" rx="420" ry="300" fill="url(#glow)"/>
+  <ellipse cx="512" cy="430" rx="500" ry="420" fill="url(#glow)"/>
   <!-- synth body -->
   <rect x="112" y="300" width="800" height="440" rx="44" fill="url(#body)" stroke="#000" stroke-width="6"/>
   <rect x="112" y="300" width="800" height="12" rx="6" fill="#ffffff" opacity="0.08"/>
@@ -36,7 +36,7 @@
     <rect x="664" y="352" width="66" height="40" rx="8"/><rect x="746" y="352" width="66" height="40" rx="8"/><rect x="828" y="352" width="44" height="40" rx="8"/>
     <rect x="664" y="410" width="66" height="40" rx="8"/><rect x="746" y="410" width="66" height="40" rx="8"/><rect x="828" y="410" width="44" height="40" rx="8"/>
   </g>
-  <rect x="664" y="466" width="208" height="12" rx="6" fill="#74dc9c" opacity="0.85"/>
+  <rect x="664" y="466" width="208" height="12" rx="6" fill="#74dc9c" opacity="0.9"/>
   <!-- keys -->
   <rect x="140" y="530" width="744" height="186" rx="10" fill="#0a0b0c"/>
   <g fill="#f4f1e8" stroke="#2a2a2a" stroke-width="3">

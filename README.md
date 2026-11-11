@@ -94,8 +94,11 @@ See `core/qs_card.cpp`. Summary:
 
 ## Roadmap
 
-1. Card + SysEx toolkit (this)
-2. Editor (programs, mixes, effects, global; live editing with opcode 10)
+See [ROADMAP.md](ROADMAP.md) for the feature list against QS SoundEditor Pro and MIDI Quest, and the Sound Bridge work after it.
+Longer term:
+
+1. Card + SysEx toolkit and librarian (done)
+2. Editor (programs done; mixes, effects next)
 3. QS player VST3 / standalone using your own card images and decoded programs
 4. 1:1 emulation core (needs the firmware EPROM dump and the sound/effects ASICs emulated)
 

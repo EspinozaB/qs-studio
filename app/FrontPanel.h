@@ -261,6 +261,9 @@ private:
         ga.addFittedText(font, name, r.getX(), r.getY(), r.getWidth(), r.getHeight(), j, 1, 0.8f);
         juce::Path p;
         ga.createPath(p);
+        // Fit the letters themselves (not the font's line box) inside r, so the nameplate is the same size on every
+        // platform's fonts and never spills onto the printed labels around it.
+        if (!p.isEmpty()) p.applyTransform(p.getTransformToScaleToFit(r, true, j));
         const auto b = p.getBounds();
         g.setColour(juce::Colours::black.withAlpha(0.45f));
         g.fillPath(p, juce::AffineTransform::translation(1.5f, 2.0f));
@@ -472,11 +475,8 @@ private:
             label(g, juce::String(juce::CharPointer_UTF8("\xe2\x96\xb6 ")) + belowNames[row], {kGridX + 10 * kCellW + 2, y, 92, 11}, 7.4f,
                   juce::Justification::centredLeft);
         }
-        // Model name, where the QS6 has its logo (plain text, not the logo).
-        const float mx = kGridX + 10 * kCellW + 100;
-        juce::ignoreUnused(mx);
-        // Right of 0-9, under the last group keys, as on the keyboard.
-        modelName(g, model, {kGridX + 10 * kCellW + 14, kDigitY - 6, kW - 8 - (kGridX + 10 * kCellW + 14), 40}, juce::Colour(0xffd9ecf8),
+        // Model name in plain lettering (not the logo): right of 0-9, under the last group keys, clear of the label rows.
+        modelName(g, model, {kGridX + 10 * kCellW + 16, kDigitY + 1, kW - 10 - (kGridX + 10 * kCellW + 16), 26}, juce::Colour(0xffd9ecf8),
                   juce::Colour(0xff6f93ae), juce::Justification::centredRight);
 
     }
@@ -561,7 +561,8 @@ private:
                   juce::Justification::centredLeft);
         }
         // Model name in plain text where the logo is, with the descriptive line under it.
-        modelName(g, model, {900, 174, 288, 34}, juce::Colour(0xff4f86e6), juce::Colour(0xff163e94), juce::Justification::centredRight);
+        // Its own band under the label rows (which end at y 175), so nothing overlaps.
+        modelName(g, model, {900, 184, 286, 24}, juce::Colour(0xff4f86e6), juce::Colour(0xff163e94), juce::Justification::centredRight);
         label(g, "64 VOICE SYNTHESIZER WITH FLASH ROM EXPANSION", {880, 213, 306, 8}, 6.0f, juce::Justification::centredRight, 0.8f);
     }
 
@@ -629,7 +630,7 @@ private:
         bracket(g, {804, 106, 102, 12}, "BANK SELECT", true, 7.0f);
 
         // Model name (plain text, where the QSR has its logo), card slots and power.
-        modelName(g, "QSR", {slots.getX(), 14, slots.getWidth(), 42}, juce::Colour(0xffe6eaee), juce::Colour(0xff7d8791),
+        modelName(g, "QSR", {slots.getX() + 20, 20, slots.getWidth() - 40, 30}, juce::Colour(0xffe6eaee), juce::Colour(0xff7d8791),
                   juce::Justification::centred);  // centred over the card slots, where the unit's nameplate is
         for (int i = 0; i < 2; ++i) {
             juce::Rectangle<float> slot(slots.getX(), slots.getY() + i * 20.0f, slots.getWidth(), 17);
