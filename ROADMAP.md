@@ -50,9 +50,27 @@ Editor gaps closed (QS SoundEditor Pro, MIDI Quest, Sound Bridge):
 - Check-up page: model and OS version, MIDI link test, every Global setting explained, User bank stats, card slot.
 
 Next:
-- Hardware results for built cards; then velocity layers, drum voices and effects on built cards.
-- Reviews of the Transfer, Capture and Setup pages (on hold), then the final pass on layout and ease of use for new users.
-- QS SoundEditor Pro's full PDF help may list more. We'll add anything it shows.
+- UX pass for new users (ease of access), including the Transfer, Capture and Setup pages, then a pre-release to the
+  testers for feedback.
+- QS SoundEditor Pro's full PDF help may list more editor features. We'll add anything it shows.
+- Hardware results for built cards (the Check-up already works on a QS6 2.00: 10 of 10 SysEx round trips, about 18 ms).
+
+## Sound Bridge parity (after the UX pass)
+
+From the Sound Bridge FAQ (midiworld.com/quadrasynth/sndbrdge.htm) and what the card builder still lacks:
+- Lower sample rates. Sound Bridge let you build at 22.05 kHz to fit about twice the audio on a card and stretch the key
+  range; 44.1 kHz for cymbals, bells and acoustic sounds. QS Studio resamples everything to 48 kHz for now. Needs: how a
+  zone stores its rate (probably the fine tune byte or the root), checked on hardware.
+- Velocity layers (up to 3 per voice) and an import of SFZ instruments for the key and velocity map. Sound Bridge on the PC
+  had no key mapping at all; the Mac version took SampleCell instruments. QS Studio already maps keys from file names.
+- Drum voices in the card's drum groups, so built samples show up in Drum mode.
+- A program bank from a .syx file instead of generated programs (Sound Bridge put one full bank on each card), plus the
+  card's effects once their format is decoded.
+- Raw .pcm import, auditioning a WAV before building, normalize, and a saved project (file list, names, roots, groups) to
+  rebuild a card later.
+- Writing to SRAM cards as well as FLASH, and a check that the card size picked fits the image.
+- Sound Bridge's tips worth showing in the builder: keep samples as loud as possible without clipping, and loop them in a
+  sample editor first (Sound Bridge itself couldn't loop cleanly).
 
 ## 0.6.0
 

@@ -40,7 +40,7 @@ inline juce::StringArray describeGlobals(const qs::Bytes& g, const juce::String&
     line("Pitch fine tune", signedText(g[2]), std::abs(fine) > 10 ? "out of tune with other instruments" : "");
     if (!isQsr) {
         line("Keyboard scaling", juce::String(g[3] & 0x7F));
-        static const char* curves[] = {"Soft", "Medium", "Hard"};
+        static const char* curves[] = {"Weighted", "Plastic", "Maximum"};  // QS6 manual, Global page 3
         line("Keyboard curve", (g[4] & 3) < 3 ? curves[g[4] & 3] : "?");
         line("Keyboard transpose", signedText(g[5]), kbdTranspose != 0 ? "the keys play transposed" : "");
         const int mode = g[6] & 0x1F;
@@ -56,8 +56,8 @@ inline juce::StringArray describeGlobals(const qs::Bytes& g, const juce::String&
     if (isQsr) line("Mix group channel", (g[16] & 0x1F) == 0 ? "Off" : juce::String(g[16] & 0x1F));
     line("General MIDI", (g[17] & 1) ? "On" : "Off", (g[17] & 1) ? "GM mode: the User banks and mixes aren't in use" : "");
     line("A-D controller reset", (g[18] & 1) ? "On" : "Off");
-    static const char* adModes[] = {"Normal", "Hold", "Off?"};
-    line("A-D controller mode", adModes[std::min(2, g[19] & 3)]);
+    static const char* adModes[] = {"Local", "MIDI", "Both", "?"};  // the QS's own screen text (OS 2.00)
+    line("A-D controller mode", adModes[g[19] & 3]);
     return out;
 }
 
@@ -119,9 +119,9 @@ public:
             juce::Thread::sleep(session.paced(40));
         }
         say("  Answered " + juce::String(answered) + " of 10." +
-            (answered ? "  Reply time " + juce::String(best, 0) + " to " + juce::String(worst, 0) + " ms, average " + juce::String(total / answered, 0) + " ms." : ""));
+            (answered ? "  Reply time " + juce::String(juce::roundToInt(best)) + " to " + juce::String(juce::roundToInt(worst)) + " ms, average " + juce::String(juce::roundToInt(total / answered)) + " ms." : ""));
         const double wire = MidiLink::wireSeconds(7 + 7 + qs::packedSize(qs::kGlobalBytes) + 1) * 1000.0;
-        say("  (The MIDI cable alone needs about " + juce::String(wire, 0) + " ms for a request and its answer.)");
+        say("  (The MIDI cable alone needs about " + juce::String(juce::roundToInt(wire)) + " ms for a request and its answer.)");
         if (answered < 10) say("  Some requests got no answer: try Transfer pace Slow on the Connection page, or another MIDI interface.");
         else if (answered && worst > 400) say("  Slow answers: the interface or its driver is adding delay. Transfers will be slower but work.");
         else say("  Good: SysEx works both ways.");
@@ -156,12 +156,12 @@ public:
         else if (b0.kind != K::Ok && b0.kind != K::BadChecksum) say("  No answer to a card read.");
         else if (qs::looksLikeInternalRom(b0.data)) say("  Card reads return the built-in sample ROM on this unit (as on the QSR), so the slot can't be checked this way.");
         else if (qs::looksLikeCard(b0.data)) {
-            juce::String name = "(no sample header)";
-            auto b64 = cardjobs::readBlock(midi, 0, 64, this);  // byte 0x10000: the sample header
-            if ((b64.kind == K::Ok || b64.kind == K::BadChecksum) && b64.data.size() > 24 && b64.data[1] == 0x70)
-                name = juce::String(std::string(reinterpret_cast<const char*>(&b64.data[10]), 14)).trimEnd() + ", " +
-                       juce::String(b64.data[8] << 8 | b64.data[9]) + " voices";
-            say("  A sample card: " + name);
+            auto b64 = cardjobs::readBlock(midi, 0, 64, this);  // byte 0x10000: the sample header, on a sample card
+            if ((b64.kind == K::Ok || b64.kind == K::BadChecksum) && b64.data.size() > 24 && b64.data[0] == 0x00 && b64.data[1] == 0x70)
+                say("  A sample card: " + juce::String(std::string(reinterpret_cast<const char*>(&b64.data[10]), 14)).trimEnd() + ", " +
+                    juce::String(b64.data[8] << 8 | b64.data[9]) + " voices.");
+            else
+                say("  A program card (programs and mixes, no samples), for example a RAM512. Its banks show as Card 1-8 on Programs.");
         } else say("  Something answered, but it isn't a sample card header (a blank FLASH card or a RAM card).");
         if (b0.kind == K::BadChecksum) say("  One block came back with a bad checksum: card reads may need Transfer pace Slow.");
 

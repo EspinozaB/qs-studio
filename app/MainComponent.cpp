@@ -266,7 +266,7 @@ void CardTab::saveBuiltCard(const qs::CardBuild& b) {
                              showCard();
                              appendLine(info, "\nBUILT " + f.getFullPathName() + "\n" + juce::String(res.secondsUsed(), 1) + " s of audio, " +
                                                   juce::String(int(res.image.size() / 1024)) + " KB image (" +
-                                                  juce::String(100.0 * double(res.image.size()) / (8.0 * 1024 * 1024), 0) + "% of an 8 MB card)");
+                                                  juce::String(juce::roundToInt(100.0 * double(res.image.size()) / (8.0 * 1024 * 1024))) + "% of an 8 MB card)");
                              for (auto& n : res.notes) appendLine(info, "  " + juce::String(n));
                              info.moveCaretToTop(false);
                              ::info("Card built", "Saved " + f.getFileName() + ".\n\nPlay it on the Sound Player page, or put a FLASH card in "
