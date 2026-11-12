@@ -435,6 +435,7 @@ MainComponent::MainComponent() {
     globalPage = new GlobalPage(session);
     auto* checkup = own(new DiagnosticsPage(session));
     auto* backup = new BackupPage(session);
+    backupPage = backup;
     auto* move = new MoveBanksPage(session, *backup, *library);
     move->goToBackup = [this] { showPageNamed("Backup & Restore"); };
     move->goToPrograms = [this] { showPageNamed("Programs"); };
@@ -476,36 +477,36 @@ MainComponent::MainComponent() {
          "- Pick the configuration first: the other settings depend on it.\n"
          "- User effect n belongs to User program n: Store to User... saves it there.",
          "Edit effects live", fxEditor},
-        {"Transfer", "Backup & Restore",
+        {"Library", "Backup & Restore",
          "Save everything you can change on the synth to one file, or put a saved file back.",
          "- Back up now: saves User programs, mixes, effects and Global settings. Changes nothing on the synth.\n"
          "- Restore: replaces the synth's User programs, mixes and effects with the file's.",
          "Save or restore everything in User memory", backup},
-        {"Transfer", juce::String(juce::CharPointer_UTF8("Move banks QS6 \xe2\x86\x94 QSR")),
+        {"Library", "Move banks",
          "Move programs between a QS6 and a QS7, QS8 or QSR without them playing the wrong samples.",
          "- Back up, convert, then restore or put on a card: the three steps below, in order.\n"
          "- The report lists every sample that changed.",
          "Convert banks between the QS6 and QS7/QS8/QSR sample sets", move},
-        {"Transfer", "Cards & ROM",
+        {"Library", "Cards & ROM",
          "Look inside card images, read and write FLASH sample cards, and save the built-in sample ROM.",
          "- Program cards (RAM512) are on the Programs page under Card.",
          "PCMCIA sound cards and the internal sample ROM", own(new CardTab(session.midi))},
-        {"Capture", "Record & Sample",
-         "Record the synth through your audio interface, or sample every note of a program.",
-         "- Pick the input in step 1, then record by hand or auto-sample.",
-         "Record audio and auto-sample programs", own(new RecorderTab(session))},
-        {"Setup", "Connection",
+        {"Synth", "Connection",
          "Connect QS Studio to your synth over MIDI. Both directions are needed.",
          "",
          "MIDI ports and synth detection", connection},
-        {"Setup", "Global Settings",
+        {"Synth", "Global Settings",
          "MIDI settings stored in the synth: controller numbers, Program Select and General MIDI mode.",
          "- Program Select must not be Off, or QS Studio can't change programs.",
          "Controller numbers, Program Select, General MIDI", globalPage},
-        {"Setup", "Check-up",
+        {"Synth", "Check-up",
          "Ask the QS everything QS Studio can over MIDI and explain the answers. Changes nothing.",
          "- Run it when something doesn't work, and save the report for a bug report.",
          "Model, OS version, MIDI link test, Globals, User bank, card slot", checkup},
+        {"Synth", "Record & Sample",
+         "Record the synth through your audio interface, or sample every note of a program.",
+         "- Pick the input in step 1, then record by hand or auto-sample.",
+         "Record audio and auto-sample programs", own(new RecorderTab(session))},
     };
     std::vector<Sidebar::Item> items;
     for (auto& p : pages) {
@@ -708,6 +709,151 @@ MainComponent::MainComponent() {
                 "there. (Program Files is read-only for normal programs.) Until then nothing you read or change will be kept.");
     connection->connectSaved();
     showPageNamed(session.midi.isOpen() ? "Programs" : "Connection");  // not connected yet: start on Connection
+
+    // Setup guide: shown until finished or skipped once.
+    guide.inputs = [] { juce::StringArray a; for (auto& d : juce::MidiInput::getAvailableDevices()) a.add(d.name); return a; };
+    guide.outputs = [] { juce::StringArray a; for (auto& d : juce::MidiOutput::getAvailableDevices()) a.add(d.name); return a; };
+    guide.connect = [this](juce::String in, juce::String out) { connection->connectTo(in, out); };
+    guide.backup = [this] {
+        settings().setValue("guideDone", true);
+        showGuide(false);
+        showPageNamed("Backup & Restore");
+        backupPage->backupNow();
+    };
+    guide.finished = [this](bool playNow) {
+        settings().setValue("guideDone", true);
+        showGuide(false);
+        if (playNow) showPageNamed("Programs");
+    };
+    addChildComponent(guide);
+    guideBtn.setTooltip("Connect, back up and the main pages, in three short steps.");
+    guideBtn.onClick = [this] { showGuide(true); };
+    updatesBtn.setTooltip("Check for a newer QS Studio. Nothing is installed unless you choose Update now.");
+    updatesBtn.onClick = [this] {
+        juce::PopupMenu m;
+        m.addItem(1, "Check for updates now");
+        m.addItem(2, "Check when QS Studio starts", true, settings().getBoolValue("autoUpdateCheck", true));
+        m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&updatesBtn), [this](int r) {
+            if (r == 1) checkForUpdates(true);
+            if (r == 2) settings().setValue("autoUpdateCheck", !settings().getBoolValue("autoUpdateCheck", true));
+        });
+    };
+    updateAvailableBtn.setColour(juce::TextButton::buttonColourId, theme::accentDim);
+    updateAvailableBtn.onClick = [this] { if (availableUpdate) showUpdate(*availableUpdate); };
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&guideBtn, &updatesBtn}) addAndMakeVisible(c);
+    addChildComponent(updateAvailableBtn);
+    if (!settings().getBoolValue("guideDone", false) && juce::SystemStats::getEnvironmentVariable("QS_STUDIO_UI_TEST", {}).isEmpty())
+        showGuide(true);
+    // Test hook for the self-update: QS_STUDIO_TEST_INSTALL=<downloaded file> installs it as if from Update now.
+    if (auto t = juce::SystemStats::getEnvironmentVariable("QS_STUDIO_TEST_INSTALL", {}); t.isNotEmpty()) {
+        juce::String err;
+        if (updates::startInstaller(juce::File(t), err)) juce::MessageManager::callAsync([] { juce::JUCEApplication::getInstance()->systemRequestedQuit(); });
+        else qslog::action("Test install failed: " + err);
+    }
+    const auto last = juce::Time(settings().getValue("lastUpdateCheck", "0").getLargeIntValue());
+    if ((settings().getBoolValue("autoUpdateCheck", true) && juce::Time::getCurrentTime() - last > juce::RelativeTime::hours(20) &&
+         juce::SystemStats::getEnvironmentVariable("QS_STUDIO_UI_TEST", {}).isEmpty()) ||
+        juce::SystemStats::getEnvironmentVariable("QS_STUDIO_UPDATE_URL", {}).isNotEmpty())
+        checkForUpdates(false);
+}
+
+void MainComponent::showGuide(bool show) {
+    if (show) guide.start();
+    guide.setVisible(show);
+    if (show) guide.toFront(false);
+    resized();
+}
+
+namespace {
+class UpdateCheckThread : public juce::Thread {
+public:
+    explicit UpdateCheckThread(std::function<void(bool, updates::Info, juce::String)> d) : juce::Thread("QS Studio update check"), done(std::move(d)) {}
+    void run() override {
+        updates::Info info;
+        juce::String err;
+        const bool ok = updates::fetchInfo(info, err);
+        juce::MessageManager::callAsync([cb = done, ok, info, err] { cb(ok, info, err); });
+    }
+    std::function<void(bool, updates::Info, juce::String)> done;
+};
+}  // namespace
+
+void MainComponent::checkForUpdates(bool userAsked) {
+    if (updateCheck && updateCheck->isThreadRunning()) return;
+    juce::Component::SafePointer<MainComponent> safe(this);
+    updateCheck = std::make_unique<UpdateCheckThread>([safe, userAsked](bool ok, updates::Info info, juce::String err) {
+        if (!safe) return;
+        settings().setValue("lastUpdateCheck", juce::String(juce::Time::getCurrentTime().toMilliseconds()));
+        const juce::String current = ProjectInfo::versionString;
+        if (!ok) {
+            qslog::action("Update check: " + err);
+            if (userAsked) ::info("Couldn't check for updates", "QS Studio couldn't read the latest release: " + err + ".\n\n" + updates::kReleasePage);
+            return;
+        }
+        const bool newer = updates::compareVersions(info.version, current) > 0;
+        qslog::action("Update check: latest is " + info.version + ", this is " + current);
+        if (!newer) {
+            if (userAsked) ::info("You're up to date", "QS Studio " + current + " is the latest version.");
+            return;
+        }
+        safe->availableUpdate = info;
+        safe->updateAvailableBtn.setButtonText("Update to " + info.version);
+        safe->updateAvailableBtn.setVisible(true);
+        safe->resized();
+        if (userAsked || settings().getValue("skipVersion") != info.version) safe->showUpdate(info);
+    });
+    updateCheck->startThread();
+}
+
+void MainComponent::showUpdate(const updates::Info& info) {
+    auto* d = new updates::UpdateDialog(info, ProjectInfo::versionString);
+    juce::DialogWindow::LaunchOptions o;
+    o.content.setOwned(d);
+    o.dialogTitle = "Update QS Studio";
+    o.dialogBackgroundColour = theme::bg;
+    o.useNativeTitleBar = true;
+    o.resizable = true;
+    auto* win = o.launchAsync();
+    juce::Component::SafePointer<juce::DialogWindow> w(win);
+    d->onClose = [w] { if (w) w->exitModalState(0); };
+    d->onSkip = [w, v = info.version] {
+        settings().setValue("skipVersion", v);
+        if (w) w->exitModalState(0);
+    };
+    d->onUpdate = [this, w, info] {
+        if (w) w->exitModalState(0);
+        installUpdate(info);
+    };
+}
+
+void MainComponent::installUpdate(const updates::Info& info) {
+    if (info.file.isEmpty()) {
+        ::info("No download for this computer", "This release has no QS Studio download for this system. Get it from:\n" + updates::kReleasePage);
+        return;
+    }
+    auto job = std::make_shared<updates::DownloadJob>(info, settingsDir().getChildFile("Updates"));
+    job->launchThread();
+    // ThreadWithProgressWindow runs modelessly; poll until it's done.
+    auto poll = std::make_shared<std::function<void()>>();
+    *poll = [job, poll] {
+        if (job->isThreadRunning()) { juce::Timer::callAfterDelay(200, *poll); return; }
+        if (!job->ok) {
+            ::info("Update not installed", "The download didn't work: " + job->error + ".\n\nYou can download it by hand from:\n" + updates::kReleasePage);
+            *poll = nullptr;
+            return;
+        }
+        juce::String err;
+        if (!updates::startInstaller(job->file, err)) {
+            ::info("Update not installed", "Downloaded, but QS Studio can't replace itself: " + err +
+                                               ".\n\nThe new version is in QS Studio Data/Updates; copy it over the old one by hand.");
+            *poll = nullptr;
+            return;
+        }
+        qslog::action("Installing update " + job->info.version + " and restarting");
+        *poll = nullptr;
+        juce::JUCEApplication::getInstance()->systemRequestedQuit();
+    };
+    juce::Timer::callAfterDelay(200, *poll);
 }
 
 void MainComponent::fillControllerBox() {
@@ -750,7 +896,15 @@ void MainComponent::showPage(int index) {
     qslog::action("Page: " + p.title);
     p.comp->setVisible(true);
     sidebar.setSelected(index);
-    header.set(p.title, p.summary, p.help);
+    // The page's own help, then the details of each section on it, in reading order.
+    juce::String help = p.help;
+    std::function<void(juce::Component*)> collect = [&](juce::Component* c) {
+        if (auto* sec = dynamic_cast<Section*>(c); sec != nullptr && sec->details.isNotEmpty())
+            help << (help.isEmpty() ? "" : "\n") << "- " << sec->heading << ": " << sec->details;
+        for (auto* ch : c->getChildren()) collect(ch);
+    };
+    collect(p.comp);
+    header.set(p.title, p.summary, help);
     resized();
 }
 
@@ -785,6 +939,7 @@ void MainComponent::sysexReceived(const qs::Bytes& msg) {
     if (auto d = qs::parseDeviceReply(msg)) {
         if (session.midi.jobsRunning > 0 && session.deviceName.isNotEmpty()) return;  // a check-up asking again: nothing changed
         qslog::action("The synth says it is a " + juce::String(d->model) + ", OS " + juce::String(d->version));
+        guide.synthFound(juce::String(d->model) + " (OS " + juce::String(d->version) + ")");
         session.deviceName = juce::String(d->model) + " v" + juce::String(d->version);
         settings().setValue("lastModel", juce::String(d->model));
         session.library.switchModel(juce::String(d->model));  // each model keeps its own banks
@@ -838,6 +993,8 @@ void MainComponent::resized() {
     appTitle.setBounds(top.removeFromLeft(130));
     top.removeFromLeft(10);
     pill.setBounds(top.removeFromLeft(340));
+    top.removeFromLeft(10);
+    if (updateAvailableBtn.isVisible()) updateAvailableBtn.setBounds(top.removeFromLeft(150));
     controllerBox.setBounds(top.removeFromRight(210));
     ctrlLabel.setBounds(top.removeFromRight(100));
     top.removeFromRight(12);
@@ -879,6 +1036,17 @@ void MainComponent::resized() {
     }
 
     sidebar.setBounds(r.removeFromLeft(230));
+    {
+        // Setup guide and Updates sit above the small print at the bottom of the sidebar, when there's room.
+        auto b = sidebar.getBounds().withTrimmedBottom(94).removeFromBottom(32).reduced(14, 1);
+        const bool room = b.getY() > sidebar.getY() + sidebar.contentBottom() + 8;
+        guideBtn.setVisible(room);
+        updatesBtn.setVisible(room);
+        guideBtn.setBounds(b.removeFromLeft(b.getWidth() / 2 - 3));
+        b.removeFromLeft(6);
+        updatesBtn.setBounds(b);
+    }
+    guide.setBounds(r);
     header.setBounds(r.removeFromTop(header.heightFor(r.getWidth())));
     if (current >= 0) pages[size_t(current)].comp->setBounds(r);
 }

@@ -51,10 +51,10 @@ private:
     bool listening = false;
 
     theme::Lcd lcd;
-    Section sourceSec{"Sound source", "Open a QCard image (.img, .bin) or the internal sample ROM dump from Cards & ROM. QS Studio "
-                                      "lists its voices; pick one and play it from the keyboard, your controller or the computer keys."};
-    Section soundSec{"Sound", "This plays the raw samples the way the card or ROM maps them across the keys (splits, velocity "
-                              "layers, loops). It's not the QS synth engine yet: no QS filters, envelopes or effects."};
+    Section sourceSec{"Sound source", "Open a card image (.img, .bin) or a ROM dump, pick a voice and play.",
+        "Play from the keyboard below, your controller or the computer keys. ROM dumps come from Cards & ROM."};
+    Section soundSec{"Sound", "The raw samples as the card maps them (splits, velocity layers, loops), not the full QS engine yet.",
+        "No QS filters, envelopes or effects yet: these sliders are a simple envelope and volume for the player."};
     juce::TextButton openBtn{"Open a card image or ROM dump..."}, audioBtn{"Audio output..."};
     juce::Label fileLabel, countLabel;
     juce::TextEditor search;

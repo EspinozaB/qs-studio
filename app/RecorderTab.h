@@ -60,8 +60,8 @@ private:
     std::unique_ptr<AutoSampler> sampler;
 
     theme::Lcd lcd;
-    Section audioSec{"1. Audio in and out", "Pick the audio interface and the input the QS's main outputs are plugged into (one input "
-                                              "for mono, two for stereo). Pick an output if you want to hear the QS through this computer."},
+    Section audioSec{"1. Audio in and out", "Pick the audio interface and the input(s) the QS's main outputs are plugged into.",
+        "One input for mono, two for stereo. Pick an output if you want to hear the QS through this computer."},
         recSec{"2. Record by hand", "Click Record, play the QS from the keyboard below or your controller, then click Stop. Each take is "
                                      "saved as a WAV file in the recordings folder."},
         autoSec{"3. Auto-sample a program", "Plays each note in the range on the QS and saves it as its own WAV, named with the note and "

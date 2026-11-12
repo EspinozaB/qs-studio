@@ -304,9 +304,8 @@ private:
     }
 
     Session& session;
-    Section introSec{"Check-up", "Asks the connected QS everything QS Studio can over MIDI and explains the answers: model and OS version, "
-                                 "whether SysEx comes back reliably and how fast, every Global setting (with warnings for the ones that "
-                                 "cause silence or ignored program changes), the User bank and the card slot. It changes nothing."};
+    Section introSec{"Check-up", "Asks the QS everything QS Studio can over MIDI and explains the answers. Changes nothing.",
+        "Model and OS version, whether SysEx comes back reliably and how fast, every Global setting (with warnings for the ones that cause silence or ignored program changes), the User bank and the card slot."};
     juce::TextButton runBtn{"Run the check-up"}, saveBtn{"Save the report"};
     juce::ToggleButton userToggle{"Include the User bank (10 s)"};
     juce::TextEditor report;

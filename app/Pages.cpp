@@ -248,6 +248,13 @@ void ConnectionPage::connect() {
     });
 }
 
+void ConnectionPage::connectTo(const juce::String& in, const juce::String& out) {
+    refreshDevices();
+    inBox.setText(in, juce::dontSendNotification);
+    outBox.setText(out, juce::dontSendNotification);
+    connect();
+}
+
 void ConnectionPage::connectSaved() {
     const auto savedIn = settings().getValue("midiIn"), savedOut = settings().getValue("midiOut");
     if (savedIn.isNotEmpty() && inBox.getText() == savedIn && outBox.getText() == savedOut) connect();

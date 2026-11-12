@@ -9,6 +9,15 @@ Back up both synths before anything that writes to them.
 - [ ] Connection: pick MIDI in/out, Connect. The pill says "Connected to your QS6 (OS ...)". Same for the QSR.
 - [ ] Switching synths: the panel look changes, and `QSStudio.QS6.library` / `QSStudio.QSR.library` both appear in `QS Studio Data`.
 
+## 0.8.0: what's new to test
+- [ ] **Setup guide:** on first start (or Setup guide in the sidebar): Connect finds your QS ("Found your QS6"), Back up now
+      runs a backup, Start playing lands on Programs. Is anything unclear for someone who's never used QS Studio?
+- [ ] **Updates...** (sidebar) > Check for updates now. Once a newer build is out: the dialog lists what changed; Update now
+      downloads, closes QS Studio, replaces it and starts the new one. Check your settings and libraries are still there.
+      Windows: a console window flashes while it swaps the file. macOS: say whether it reopens without a security prompt.
+- [ ] **Sidebar:** Play / Edit / Library / Synth. Can testers find things?
+- [ ] **How this works** (top right) now holds the longer explanations; is the shorter page text enough?
+
 ## 0.7.0: what's new to test
 - [ ] **Undo / Redo** (buttons, or Ctrl+Z / Ctrl+Y; Cmd on a Mac) in the Program, Mix and Effects editors. With Live edit on,
       the QS follows the undo.

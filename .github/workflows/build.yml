@@ -110,7 +110,7 @@ jobs:
           - macOS (Apple silicon and Intel): QS-Studio-macOS.zip. Unsigned for now: right-click the app, Open, then Open again.
           - Linux: QS-Studio-Linux.tar.gz. Needs ALSA and X11 (any desktop distro).
 
-          It keeps everything it saves in a "QS Studio Data" folder next to it. To update, replace the program and keep that folder.
+          It keeps everything it saves in a "QS Studio Data" folder next to it. To update, use Updates... in QS Studio's sidebar, or replace the program and keep that folder.
 
           **QS Sound Player** (plays your own QCard images and QS sample ROM dumps; VST3 plugin plus a standalone app)
           - Windows: QS-Sound-Player-Windows.zip. Copy the .vst3 folder to C:\Program Files\Common Files\VST3.
@@ -121,5 +121,26 @@ jobs:
 
           Unofficial; not made or endorsed by Alesis or inMusic.
           EOF
+          # What's new (the top section of CHANGELOG.md) goes first in the release notes.
+          python3 - "$ver" <<'PY' > whatsnew.md
+          import sys, re
+          text = open("CHANGELOG.md").read()
+          parts = re.split(r"^## ", text, flags=re.M)
+          top = next((p for p in parts[1:] if p.startswith(sys.argv[1])), "")
+          print("## What's new in " + top.strip() + "\n" if top else "")
+          PY
+          cat whatsnew.md notes.md > notes2.md && mv notes2.md notes.md
+          # version.json: what QS Studio's update check reads.
+          python3 - "$ver" "$stage" "$sha" <<'PY'
+          import sys, json, hashlib, os
+          def sha(f):
+              p = os.path.join("dist", f)
+              return hashlib.sha256(open(p, "rb").read()).hexdigest() if os.path.exists(p) else ""
+          files = {"windows": "QS-Studio.exe", "macos": "QS-Studio-macOS.zip", "linux": "QS-Studio-Linux.tar.gz"}
+          json.dump({"version": sys.argv[1], "stage": sys.argv[2], "sha": sys.argv[3],
+                     "changelog": open("CHANGELOG.md").read(),
+                     "assets": {k: {"file": v, "sha256": sha(v)} for k, v in files.items()}},
+                    open("dist/version.json", "w"), indent=1)
+          PY
           gh release delete latest --cleanup-tag -y || true
           gh release create latest dist/* --prerelease --target "$GITHUB_SHA" --title "QS Studio $ver $stage ($sha)" --notes-file notes.md

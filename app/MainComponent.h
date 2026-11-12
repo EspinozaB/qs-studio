@@ -11,6 +11,8 @@
 #include "PerformanceControls.h"
 #include "Shell.h"
 #include "Theme.h"
+#include "Updater.h"
+#include "Welcome.h"
 
 class LibraryTab;
 class EditorTab;
@@ -46,18 +48,14 @@ private:
         buildBtn{"Build a card from WAV files..."};
     juce::ComboBox sizeBox;
     juce::Label sizeLabel{{}, "Card size"};
-    Section imageSec{"Look inside a card image", "Open a card image file from your computer (.img or .bin, for example a Sound Bridge image or a "
-                                                 "card you read with the button below) to list its samples, programs and mixes, and export the "
-                                                 "samples as WAV files or SFZ instruments for a software sampler."};
-    Section buildSec{"Make your own card", "WAV files named like Piano_C3.wav, Piano_C4.wav become one voice split across the keys; "
-                                           "loops are kept and each voice gets a program. New and untested on hardware: use a FLASH "
-                                           "card you can rewrite."};
-    Section slotSec{"The card in the QS", "Power the QS off before inserting or removing a card. Test checks that the QS answers card "
-                                          "requests. Read saves a FLASH sample card to an image; Write puts an image onto a FLASH card. "
-                                          "RAM512 program cards can't be read or written this way: use Move Banks for those."};
-    Section romSec{"Built-in sample ROM", "On units where Test says \"built-in sound ROM\" (the QSR does), card reads return the synth's own "
-                                          "sample ROM. This saves it to a file, about 1 hour per 8 MB, and resumes if you stop. "
-                                          "Only the first 8 MB can be reached over MIDI. Keep the file private: the samples are Alesis's."};
+    Section imageSec{"Look inside a card image", "Open a card image (.img or .bin) to list its samples, programs and mixes, and export the samples as WAV or SFZ.",
+        "For example a Sound Bridge image or a card you read with Read card from QS. SFZ instruments open in most software samplers."};
+    Section buildSec{"Make your own card", "Turn WAV files into a QS card image. New and untested on hardware: use a FLASH card you can rewrite.",
+        "Files named like Piano_C3.wav, Piano_C4.wav become one voice split across the keys (C3 = 60); others become a voice each. Loops in the WAVs are kept and each voice gets a program. The image opens here, ready for the Sound Player or Write."};
+    Section slotSec{"The card in the QS", "Test, read or write the FLASH card in the QS. Power the QS off before inserting or removing a card.",
+        "Read saves a FLASH sample card to an image; Write erases the card and puts an image on it. RAM512 program cards are on the Programs page (Card banks) and Move banks."};
+    Section romSec{"Built-in sample ROM", "Saves the synth's built-in sample ROM, on units whose card reads return it (the QSR does).",
+        "About 1 hour per 8 MB, and it resumes if you stop. Only the first 8 MB can be reached over MIDI. Keep the file private: the samples are Alesis's."};
     juce::TextEditor info;
     std::unique_ptr<juce::FileChooser> chooser;
 };
@@ -91,6 +89,17 @@ private:
     EffectsTab* fxEditor = nullptr;
     ConnectionPage* connection = nullptr;
     GlobalPage* globalPage = nullptr;
+    BackupPage* backupPage = nullptr;
+
+    // Setup guide and updates.
+    WelcomeGuide guide;
+    juce::TextButton guideBtn{"Setup guide"}, updatesBtn{"Updates..."}, updateAvailableBtn;
+    std::optional<updates::Info> availableUpdate;
+    std::unique_ptr<juce::Thread> updateCheck;
+    void showGuide(bool show);
+    void checkForUpdates(bool userAsked);
+    void showUpdate(const updates::Info& info);
+    void installUpdate(const updates::Info& info);
 
     Sidebar sidebar;
     PageHeader header;

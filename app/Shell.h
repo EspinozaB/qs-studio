@@ -5,9 +5,13 @@
 #include "Theme.h"
 
 // A titled block with a short explanation, used to group controls on a page.
-class Section : public juce::Component {
+// A panel with a title and one short line. Longer details show as its tooltip and in the page's "How this works".
+class Section : public juce::Component, public juce::SettableTooltipClient {
 public:
-    Section(juce::String title, juce::String text) : heading(std::move(title)), body(std::move(text)) {}
+    Section(juce::String title, juce::String text, juce::String more = {})
+        : heading(std::move(title)), body(std::move(text)), details(std::move(more)) {
+        if (details.isNotEmpty()) setTooltip(details);
+    }
 
     int textHeight(int width) const {
         if (body.isEmpty()) return 0;
@@ -32,7 +36,7 @@ public:
         g.drawText(heading, r.removeFromTop(26), juce::Justification::centredLeft);
         layout(r.getWidth()).draw(g, r.toFloat());
     }
-    juce::String heading, body;
+    juce::String heading, body, details;
 
 private:
     juce::TextLayout layout(int width) const {
@@ -59,6 +63,7 @@ public:
     int getSelected() const { return selected; }
     std::function<void(int)> onSelect;
     juce::String footer;  // small print at the bottom
+    int contentBottom() const { return items.empty() ? 0 : topOf(int(items.size()) - 1) + kRow; }
 
     void paint(juce::Graphics& g) override {
         g.fillAll(theme::panel);
@@ -111,7 +116,7 @@ public:
     }
 
 private:
-    static constexpr int kRow = 36, kGroup = 34;
+    static constexpr int kRow = 34, kGroup = 32;
     // y of item i: every new group adds a heading above it
     int topOf(int i) const {
         int y = 8;

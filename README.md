@@ -39,14 +39,14 @@ Change it under **Panel look**.
 | **Play** > Sound Player | Opens a QCard image or a QS internal sample ROM dump and plays its voices (key splits, velocity layers, loops) from the keyboard, your controller or the computer keys, through this computer's audio. Not the full QS engine yet: no QS filters, envelopes or effects. The same player is a VST3/AU/LV2 plugin. |
 | **Edit** > Mix Editor | The 16 channels of a mix: program and bank, on/off, volume, pan, output, effect level and bus, octave and semitone, key range, MIDI in/out, keyboard and controller switches, and which channel's effect the mix uses. Live edits, Store to User mix, open/save .syx. **Edit** on a channel opens that channel's program inside the mix. Undo/Redo and channel copy, paste and swap. |
 | **Edit** > Effects Editor | An effect patch for the program or the mix: the configuration (1 Reverb, 2 Reverbs, Lezlie and Reverb, Reverb and EQ, Overdrive and Lezlie), then every pitch, delay, reverb, lezlie, overdrive, EQ and modulation parameter, shown for the effect types in use. Live edits, Store to a User effect, open/save .syx. |
-| **Transfer** > Backup & Restore | **Back up now** asks the QS for all User programs, mixes, effects and Global settings and saves one .syx (checked for all 357 parts). **Restore** previews a file and sends it back (Global only if you tick it). Manual capture for dumps started from the QS. |
-| **Transfer** > Move banks QS6 <-> QSR | Three steps: back up, convert, then restore or copy to a card. See below. |
-| **Transfer** > Cards & ROM | Open QCard / QuadraCard / Sound Bridge images and export WAVs or SFZ; test the card slot, read a FLASH card, write an image to a FLASH card. **Dump internal sample ROM** saves the built-in samples on units that answer card reads with their ROM (confirmed on a QSR; a QS6 returns the card in its slot instead, and QS Studio now says so); resumable, about 1 hour per 8 MB. Keep ROM dumps private. |
-| **Transfer** > Cards & ROM: Build a card | **Build a card from WAV files** makes a QS card image from your own samples, like Alesis Sound Bridge did: files named like `Piano_C3.wav` become one voice split across the keys, loops in the WAVs are kept, and each voice gets a program. Play it on the Sound Player or write it to a FLASH card. New and untested on hardware. |
-| **Capture** > Record & Sample | Records the QS through your audio interface to WAV (16/24-bit) with live monitoring. **Auto-sample notes** plays a note range at chosen velocities and saves one file per note. |
-| **Setup** > Connection | Pick MIDI in/out; QS Studio reconnects at startup and asks the synth what it is (model + OS version). **Transfer pace** slows long reads for flaky interfaces. **Open the logs** shows the daily session logs (what you clicked, what went to and from the synth) to attach to bug reports. |
-| **Setup** > Global Settings | Read and edit Controller A-D and pedal CC numbers, MIDI Program Select and General MIDI mode on the QS, and try Controllers A-D (the QS6 only has the A slider). |
-| **Setup** > Check-up | Asks the QS everything QS Studio can over MIDI and explains it: model and OS version, a timed SysEx test, every Global setting (with warnings for the ones that cause silence or ignored program changes), User bank stats and the card slot. Saves a report for bug reports. Changes nothing. |
+| **Library** > Backup & Restore | **Back up now** asks the QS for all User programs, mixes, effects and Global settings and saves one .syx (checked for all 357 parts). **Restore** previews a file and sends it back (Global only if you tick it). Manual capture for dumps started from the QS. |
+| **Library** > Move banks | Three steps: back up, convert, then restore or copy to a card. See below. |
+| **Library** > Cards & ROM | Open QCard / QuadraCard / Sound Bridge images and export WAVs or SFZ; test the card slot, read a FLASH card, write an image to a FLASH card. **Dump internal sample ROM** saves the built-in samples on units that answer card reads with their ROM (confirmed on a QSR; a QS6 returns the card in its slot instead, and QS Studio now says so); resumable, about 1 hour per 8 MB. Keep ROM dumps private. |
+| **Library** > Cards & ROM: Build a card | **Build a card from WAV files** makes a QS card image from your own samples, like Alesis Sound Bridge did: files named like `Piano_C3.wav` become one voice split across the keys, loops in the WAVs are kept, and each voice gets a program. Play it on the Sound Player or write it to a FLASH card. New and untested on hardware. |
+| **Synth** > Record & Sample | Records the QS through your audio interface to WAV (16/24-bit) with live monitoring. **Auto-sample notes** plays a note range at chosen velocities and saves one file per note. |
+| **Synth** > Connection | Pick MIDI in/out; QS Studio reconnects at startup and asks the synth what it is (model + OS version). **Transfer pace** slows long reads for flaky interfaces. **Open the logs** shows the daily session logs (what you clicked, what went to and from the synth) to attach to bug reports. |
+| **Synth** > Global Settings | Read and edit Controller A-D and pedal CC numbers, MIDI Program Select and General MIDI mode on the QS, and try Controllers A-D (the QS6 only has the A slider). |
+| **Synth** > Check-up | Asks the QS everything QS Studio can over MIDI and explains it: model and OS version, a timed SysEx test, every Global setting (with warnings for the ones that cause silence or ignored program changes), User bank stats and the card slot. Saves a report for bug reports. Changes nothing. |
 
 The strip along the bottom plays the QS on the chosen MIDI channel: keyboard (your computer keys work too), pitch wheel, mod wheel,
 Controller A (A-D on models with four sliders) and volume. **Hide keyboard** folds it away.
@@ -65,7 +65,7 @@ puts your setting back afterwards.
 **Where things are saved:** only in `QS Studio Data`, next to the program (on macOS, next to the `.app`; for a Linux AppImage,
 next to the `.AppImage`). Nothing goes in AppData, the registry or your home folder, so the QS Studio folder can live anywhere
 you can write to: Documents, the Desktop or a USB stick (not Program Files, which is read-only for normal programs; QS Studio
-warns you if it can't write). **To update, replace the program and keep `QS Studio Data`.** The Connection page shows the folder
+warns you if it can't write). **To update, click Updates... at the bottom of the sidebar**: QS Studio shows what changed and installs the new version only if you click Update now (it checks the download's SHA-256, replaces the program, restarts, and leaves `QS Studio Data` alone). Updating by hand works too: replace the program and keep `QS Studio Data`. The Connection page shows the folder
 and opens it. Files from older versions (next to the exe, or in AppData) are moved in automatically.
 - `QSStudio.<model>.library`: what was read or imported, **one file per model** (`QSStudio.QS6.library`, `QSStudio.QSR.library`),
   so two synths never overwrite each other. Export / Import on the Connection page to keep a copy or share one.
@@ -73,7 +73,7 @@ and opens it. Files from older versions (next to the exe, or in AppData) are mov
 - `QSStudio.settings`: MIDI ports, look, last model and other choices.
 
 **QS6 and QS7/QS8/QSR banks:** the QS6 has its own sample ROM; the QS7, QS8 and QSR share another. A program stores only a sample
-group and number, so a QS6 program can play a different sample on a QSR. **Move banks QS6 <-> QSR** (or Programs > **Convert a bank file**) rewrites each
+group and number, so a QS6 program can play a different sample on a QSR. **Library > Move banks** (or Programs > **Convert a bank file**) rewrites each
 program to the same-named sample on the other model (exact, or a close name such as GrandPiano -> GrndPianoL) and writes a report of
 every change and every sample with no match. Sample tables come from the sample charts in the Alesis reference manuals
 (`tools/gen_samples.py`); the QS7/QS8 chart was checked against a QSR's ROM directory. The QS6 chart is unverified until a QS6 ROM is read.
