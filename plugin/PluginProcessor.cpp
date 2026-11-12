@@ -5,6 +5,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout layout() {
     using P = juce::AudioParameterFloat;
     juce::AudioProcessorValueTreeState::ParameterLayout l;
     l.add(std::make_unique<P>(juce::ParameterID{"attack", 1}, "Attack", juce::NormalisableRange<float>(0.0f, 2.0f, 0.001f, 0.4f), 0.002f));
+    l.add(std::make_unique<P>(juce::ParameterID{"decay", 1}, "Decay", juce::NormalisableRange<float>(0.01f, 10.0f, 0.001f, 0.4f), 1.0f));
+    l.add(std::make_unique<P>(juce::ParameterID{"sustain", 1}, "Sustain", juce::NormalisableRange<float>(0.0f, 1.0f), 1.0f));
     l.add(std::make_unique<P>(juce::ParameterID{"release", 1}, "Release", juce::NormalisableRange<float>(0.0f, 5.0f, 0.001f, 0.4f), 0.35f));
     l.add(std::make_unique<P>(juce::ParameterID{"volume", 1}, "Volume", juce::NormalisableRange<float>(0.0f, 1.0f), 0.5f));
     return l;
@@ -20,6 +22,8 @@ QsPlayerProcessor::QsPlayerProcessor()
 void QsPlayerProcessor::syncParams() {
     engine.settings.attack = params.getRawParameterValue("attack")->load();
     engine.settings.release = params.getRawParameterValue("release")->load();
+    engine.settings.decay = params.getRawParameterValue("decay")->load();
+    engine.settings.sustain = params.getRawParameterValue("sustain")->load();
     engine.settings.gain = params.getRawParameterValue("volume")->load();
 }
 
@@ -69,14 +73,16 @@ class QsPlayerEditor : public juce::AudioProcessorEditor, private juce::ListBoxM
 public:
     explicit QsPlayerEditor(QsPlayerProcessor& p)
         : AudioProcessorEditor(p), proc(p),
-          attachA(p.params, "attack", attack), attachR(p.params, "release", release), attachV(p.params, "volume", volume) {
+          attachA(p.params, "attack", attack), attachD(p.params, "decay", decay), attachS(p.params, "sustain", sustain),
+          attachR(p.params, "release", release), attachV(p.params, "volume", volume) {
         for (juce::Component* c : std::initializer_list<juce::Component*>{&title, &openBtn, &fileLabel, &search, &list, &attack, &release, &volume,
-                                                                        &attackL, &releaseL, &volumeL, &note})
+                                                                        &attackL, &releaseL, &volumeL, &note, &decay, &sustain,
+                                                                        &decayL, &sustainL})
             addAndMakeVisible(c);
         title.setText("QS Sound Player", juce::dontSendNotification);
         title.setFont(juce::FontOptions(20.0f, juce::Font::bold));
         title.setColour(juce::Label::textColourId, kText);
-        for (auto* l : {&fileLabel, &attackL, &releaseL, &volumeL, &note}) l->setColour(juce::Label::textColourId, kDim);
+        for (auto* l : {&fileLabel, &attackL, &decayL, &sustainL, &releaseL, &volumeL, &note}) l->setColour(juce::Label::textColourId, kDim);
         note.setText("Plays the raw samples of your own card image or ROM dump (splits, layers, loops), not the full QS engine. "
                      "QS Studio " + juce::String(JucePlugin_VersionString) + " " + QS_STAGE + ". Unofficial; not made or endorsed by Alesis.",
                      juce::dontSendNotification);
@@ -96,12 +102,14 @@ public:
         list.setModel(this);
         list.setRowHeight(24);
         list.setColour(juce::ListBox::backgroundColourId, kPanel);
-        for (auto* s : {&attack, &release, &volume}) {
+        for (auto* s : {&attack, &decay, &sustain, &release, &volume}) {
             s->setSliderStyle(juce::Slider::LinearBar);
             s->setColour(juce::Slider::trackColourId, kAccent.withAlpha(0.6f));
         }
         attackL.setText("Attack", juce::dontSendNotification);
         releaseL.setText("Release", juce::dontSendNotification);
+        decayL.setText("Decay", juce::dontSendNotification);
+        sustainL.setText("Sustain", juce::dontSendNotification);
         volumeL.setText("Volume", juce::dontSendNotification);
         juce::Component::SafePointer<QsPlayerEditor> safe(this);
         proc.onChange = [safe] {
@@ -111,7 +119,7 @@ public:
         };
         setResizable(true, true);
         setResizeLimits(520, 400, 1600, 1200);
-        setSize(720, 520);
+        setSize(720, 560);
         refresh();
     }
     ~QsPlayerEditor() override { proc.onChange = nullptr; }
@@ -124,9 +132,17 @@ public:
         openBtn.setBounds(top.removeFromRight(260));
         fileLabel.setBounds(r.removeFromTop(24));
         note.setBounds(r.removeFromBottom(36));
+        auto knobs2 = r.removeFromBottom(30);
+        r.removeFromBottom(4);
         auto knobs = r.removeFromBottom(30);
-        for (auto [l, s] : {std::pair<juce::Label*, juce::Slider*>{&attackL, &attack}, {&releaseL, &release}, {&volumeL, &volume}}) {
-            auto c = knobs.removeFromLeft(knobs.getWidth() / 3 + 1);
+        const int third = knobs.getWidth() / 3;
+        for (auto [l, s] : {std::pair<juce::Label*, juce::Slider*>{&attackL, &attack}, {&decayL, &decay}, {&sustainL, &sustain}}) {
+            auto c = knobs.removeFromLeft(third);
+            l->setBounds(c.removeFromLeft(60));
+            s->setBounds(c.reduced(4, 0));
+        }
+        for (auto [l, s] : {std::pair<juce::Label*, juce::Slider*>{&releaseL, &release}, {&volumeL, &volume}}) {
+            auto c = knobs2.removeFromLeft(third);
             l->setBounds(c.removeFromLeft(60));
             s->setBounds(c.reduced(4, 0));
         }
@@ -173,12 +189,12 @@ private:
     }
 
     QsPlayerProcessor& proc;
-    juce::Label title, fileLabel, attackL, releaseL, volumeL, note;
+    juce::Label title, fileLabel, attackL, decayL, sustainL, releaseL, volumeL, note;
     juce::TextButton openBtn{"Open a card image or ROM dump..."};
     juce::TextEditor search;
     juce::ListBox list;
-    juce::Slider attack, release, volume;
-    juce::AudioProcessorValueTreeState::SliderAttachment attachA, attachR, attachV;
+    juce::Slider attack, decay, sustain, release, volume;
+    juce::AudioProcessorValueTreeState::SliderAttachment attachA, attachD, attachS, attachR, attachV;
     std::vector<int> rows;
     std::unique_ptr<juce::FileChooser> chooser;
 };

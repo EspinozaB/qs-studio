@@ -37,11 +37,19 @@ programs apart.
 10. Name lists exported as CSV.
 11. Session logs with MIDI traffic, for bug reports.
 
-## Still open
+## Still open before Sound Bridge work
 
+Editor gaps (QS SoundEditor Pro, MIDI Quest):
+- Undo and redo in the Program, Mix and Effects editors.
+- Sound tools in the Program Editor: copy, paste and swap a sound; start a new program from a clean default.
+- Mix tools: copy a channel to another channel.
 - Search across every saved library and backup (MIDI Quest's database).
-- Drum pad monitor for e-drum setups (QS SoundEditor's Drum Kit Calibration). Low priority.
 - Drag to reorder in the list (swap and copy cover it for now).
+- Generate programs by blending or randomizing (MIDI Quest). Low priority.
+- Drum pad monitor for e-drum setups (QS SoundEditor's Drum Kit Calibration). Low priority.
+
+Then the reviews of the Transfer (Backup, Move Banks), Capture (Record & Sample, Cards & ROM) and Setup (Connection,
+Global) pages, before the final pass on layout and ease of use.
 - QS SoundEditor Pro's full PDF help may list more. We'll add anything it shows.
 
 ## 0.6.0

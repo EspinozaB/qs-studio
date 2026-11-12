@@ -9,6 +9,12 @@ Back up both synths before anything that writes to them.
 - [ ] Connection: pick MIDI in/out, Connect. The pill says "Connected to your QS6 (OS ...)". Same for the QSR.
 - [ ] Switching synths: the panel look changes, and `QSStudio.QS6.library` / `QSStudio.QSR.library` both appear in `QS Studio Data`.
 
+## 0.6.2: fixes to check
+- [ ] **Sound Player with the Classical card:** notes stop when you let go, and playing more notes doesn't build up a whine.
+      (The cause: the player added its sound onto a buffer that still held the last block, so every block fed the next.)
+- [ ] **Decay and Sustain:** for pianos, mallets and plucks, set Sustain around 0.2 and Decay 1-3 s so held notes fade like
+      the QS does. Sustain 1 holds the sample's loop for as long as the key is down.
+
 ## 0.6.1: fixes to check
 - [ ] **Sound Player with your QCard .bin:** opens at a sane level. The log line "Sound Player: opened ..." says which byte order
       it found. If it refuses the file ("doesn't point at audio"), send the file and the log.

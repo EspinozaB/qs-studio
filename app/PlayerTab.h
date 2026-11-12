@@ -59,8 +59,9 @@ private:
     juce::Label fileLabel, countLabel;
     juce::TextEditor search;
     juce::ListBox list{"voices", this};
-    juce::Slider attack, release, volume;
-    juce::Label attackLabel{{}, "Attack"}, releaseLabel{{}, "Release"}, volumeLabel{{}, "Volume"};
+    juce::Slider attack, decay, sustain, release, volume;
+    juce::Label attackLabel{{}, "Attack"}, decayLabel{{}, "Decay"}, sustainLabel{{}, "Sustain"}, releaseLabel{{}, "Release"},
+        volumeLabel{{}, "Volume"};
     juce::ToggleButton alsoQs{"Also play the QS"};
     std::unique_ptr<juce::FileChooser> chooser;
 };

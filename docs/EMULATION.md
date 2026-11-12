@@ -57,6 +57,20 @@ The ROMs hold the QS's own display text, which QS Studio now uses for effect inp
    the ASIC register map worked out by tracing the OS. The high-level engine from steps 2-3 becomes the ASIC model's
    reference.
 
+### Getting the samples
+
+- **QS7, QS8, QSR:** the first 8 MB chip comes out over MIDI (Cards & ROM). The second chip doesn't, so it has to be read
+  off the board.
+- **QS6:** nothing over MIDI (a card read returns the card). Two ways:
+  - Record it: the auto-sampler plays each sample on its own and saves WAVs. No soldering, but it's the analog output
+    (converters, noise floor), not the exact data, and loop points have to be found again.
+  - Read the chips: the sample ROMs are mask ROMs soldered to the main board. A programmer like the XGecu T48 reads them
+    once they're off the board and in the right socket adapter for their package. Reading them in place through a clip
+    usually fails, because the rest of the board is wired to the same pins. So it means hot-air removal, reading, and
+    putting them back (or fitting sockets). Photos of the chip markings tell us the package and adapter first.
+- Before opening a QS6: check how many of its samples are already in the QS7/QS8/QSR ROM. If the QSR's second chip gets
+  read, that may cover most of the QS6 too.
+
 What helps most now:
 - A QS6 sample ROM read with a chip programmer (the QS6 doesn't hand it out over MIDI), and the QSR's second chip.
 - Recordings of single notes from known programs on real units (the auto-sampler can do this hands-free).

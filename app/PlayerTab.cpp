@@ -11,7 +11,7 @@ PlayerTab::PlayerTab(Session& s) : session(s) {
     collector.reset(48000.0);  // until the audio device starts
     for (juce::Component* c : std::initializer_list<juce::Component*>{&lcd, &sourceSec, &soundSec, &openBtn, &audioBtn, &fileLabel, &countLabel,
                                                                     &search, &list, &attack, &release, &volume, &attackLabel, &releaseLabel,
-                                                                    &volumeLabel, &alsoQs})
+                                                                    &volumeLabel, &alsoQs, &decay, &sustain, &decayLabel, &sustainLabel})
         addAndMakeVisible(c);
     openBtn.onClick = [this] { openFile(); };
     audioBtn.onClick = [this] { showAudioSettings(); };
@@ -20,7 +20,7 @@ PlayerTab::PlayerTab(Session& s) : session(s) {
     search.onTextChange = [this] { filter(); };
     list.setRowHeight(26);
     list.setColour(juce::ListBox::backgroundColourId, theme::panel);
-    for (auto* l : {&fileLabel, &countLabel, &attackLabel, &releaseLabel, &volumeLabel}) l->setColour(juce::Label::textColourId, theme::dim);
+    for (auto* l : {&fileLabel, &countLabel, &attackLabel, &decayLabel, &sustainLabel, &releaseLabel, &volumeLabel}) l->setColour(juce::Label::textColourId, theme::dim);
     auto setup = [](juce::Slider& sl, double lo, double hi, double v, const juce::String& suffix) {
         sl.setSliderStyle(juce::Slider::LinearBar);
         sl.setRange(lo, hi, 0.001);
@@ -29,19 +29,28 @@ PlayerTab::PlayerTab(Session& s) : session(s) {
         sl.setNumDecimalPlacesToDisplay(suffix == " s" ? 3 : 2);
     };
     setup(attack, 0.0, 2.0, settings().getDoubleValue("playerAttack", 0.002), " s");
+    setup(decay, 0.01, 10.0, settings().getDoubleValue("playerDecay", 1.0), " s");
+    setup(sustain, 0.0, 1.0, settings().getDoubleValue("playerSustain", 1.0), "");
     setup(release, 0.0, 5.0, settings().getDoubleValue("playerRelease", 0.35), " s");
     setup(volume, 0.0, 1.0, settings().getDoubleValue("playerVolume", 0.5), "");
     attack.setSkewFactorFromMidPoint(0.2);
     release.setSkewFactorFromMidPoint(0.8);
+    decay.setSkewFactorFromMidPoint(1.0);
+    sustain.setTooltip("Level while the key is held. 1 holds the sample's loop at full level; lower it (with Decay) for "
+                       "pianos, mallets and plucks, which the QS fades with the program's envelope.");
     auto apply = [this] {
         engine.settings.attack = float(attack.getValue());
         engine.settings.release = float(release.getValue());
+        engine.settings.decay = float(decay.getValue());
+        engine.settings.sustain = float(sustain.getValue());
+        settings().setValue("playerDecay", decay.getValue());
+        settings().setValue("playerSustain", sustain.getValue());
         engine.settings.gain = float(volume.getValue());
         settings().setValue("playerAttack", attack.getValue());
         settings().setValue("playerRelease", release.getValue());
         settings().setValue("playerVolume", volume.getValue());
     };
-    attack.onValueChange = release.onValueChange = volume.onValueChange = apply;
+    attack.onValueChange = release.onValueChange = volume.onValueChange = decay.onValueChange = sustain.onValueChange = apply;
     apply();
     alsoQs.setToggleState(settings().getBoolValue("playerAlsoQs", false), juce::dontSendNotification);
     alsoQs.setTooltip("Off: the keyboard and your controller play only these samples. On: they play the QS as well.");
@@ -93,14 +102,18 @@ void PlayerTab::audioDeviceAboutToStart(juce::AudioIODevice* d) {
 
 void PlayerTab::audioDeviceIOCallbackWithContext(const float* const*, int, float* const* out, int numOut, int n,
                                                  const juce::AudioIODeviceCallbackContext&) {
-    // Other callbacks (the recorder's monitoring) may share this device: add to what's there, don't overwrite.
-    if (scratch.getNumSamples() < n) return;
+    // Write the outputs, never add to them: the device manager hands a second callback a scratch buffer that still
+    // holds the previous block, and sums it into the device itself. (Adding here fed each block back into the next:
+    // a whine that grew with every note and didn't stop.)
+    for (int ch = 0; ch < numOut; ++ch)
+        if (out[ch] != nullptr) juce::FloatVectorOperations::clear(out[ch], n);
+    if (scratch.getNumSamples() < n) scratch.setSize(2, n, false, false, true);  // rare: a bigger block than announced
     scratch.clear(0, n);
     juce::MidiBuffer midi;
     collector.removeNextBlockOfMessages(midi, n);
     engine.render(scratch, midi, 0, n);
     for (int ch = 0; ch < numOut; ++ch)
-        if (out[ch] != nullptr) juce::FloatVectorOperations::add(out[ch], scratch.getReadPointer(juce::jmin(ch, 1)), n);
+        if (out[ch] != nullptr) juce::FloatVectorOperations::copy(out[ch], scratch.getReadPointer(juce::jmin(ch, 1)), n);
 }
 
 void PlayerTab::handleNoteOn(juce::MidiKeyboardState*, int, int note, float vel) {
@@ -237,10 +250,11 @@ void PlayerTab::resized() {
     search.setBounds(r.removeFromTop(30));
     r.removeFromTop(6);
     list.setBounds(r);
-    const int h = soundSec.heightFor(right.getWidth(), 3 * 34 + 40);
+    const int h = soundSec.heightFor(right.getWidth(), 5 * 34 + 40);
     soundSec.setBounds(right.removeFromTop(h));
     auto c = soundSec.contentArea();
-    for (auto [l, s] : {std::pair<juce::Label*, juce::Slider*>{&attackLabel, &attack}, {&releaseLabel, &release}, {&volumeLabel, &volume}}) {
+    for (auto [l, s] : {std::pair<juce::Label*, juce::Slider*>{&attackLabel, &attack}, {&decayLabel, &decay}, {&sustainLabel, &sustain},
+                        {&releaseLabel, &release}, {&volumeLabel, &volume}}) {
         auto row = c.removeFromTop(30);
         l->setBounds(row.removeFromLeft(70));
         s->setBounds(row);

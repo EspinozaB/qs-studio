@@ -66,7 +66,7 @@ public:
 };
 
 struct Settings {
-    std::atomic<float> attack{0.002f}, release{0.35f}, gain{0.5f};
+    std::atomic<float> attack{0.002f}, decay{1.0f}, sustain{1.0f}, release{0.35f}, gain{0.5f};
 };
 
 class Voice : public juce::SynthesiserVoice {
@@ -95,7 +95,7 @@ public:
         step = std::pow(2.0, (note - z.root) / 12.0) * 48000.0 / getSampleRate();
         level = velocity * velocity;
         adsr.setSampleRate(getSampleRate());
-        adsr.setParameters({settings.attack.load(), 0.0f, 1.0f, settings.release.load()});
+        adsr.setParameters({settings.attack.load(), settings.decay.load(), settings.sustain.load(), settings.release.load()});
         adsr.noteOn();
     }
 
