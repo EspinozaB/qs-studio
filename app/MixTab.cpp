@@ -186,6 +186,7 @@ MixTab::MixTab(Session& s) : session(s) {
         nameDirty = true;
         lastNameEdit = juce::Time::getMillisecondCounter();
         updateLcd();
+        edited("Name");
     };
     addAndMakeVisible(nameEdit);
     liveToggle.setToggleState(settings().getBoolValue("liveEdit", true), juce::dontSendNotification);
@@ -202,6 +203,11 @@ MixTab::MixTab(Session& s) : session(s) {
     for (juce::Component* c : std::initializer_list<juce::Component*>{&liveToggle, &getBtn, &sendBtn, &storeBtn, &openBtn, &saveBtn, &fxBtn,
                                                                     &fxChannel, &fxChannelLabel, &fxProgChange})
         addAndMakeVisible(c);
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&undoBtns.undo, &undoBtns.redo, &toolsBtn}) addAndMakeVisible(c);
+    undoBtns.undo.onClick = [this] { if (auto st = history.undo()) applyState(*st); };
+    undoBtns.redo.onClick = [this] { if (auto st = history.redo()) applyState(*st); };
+    toolsBtn.setTooltip("Copy, paste or swap whole channels.");
+    toolsBtn.onClick = [this] { showTools(); };
     getBtn.setTooltip("Loads the mix the QS is playing (its mix edit buffer).");
     sendBtn.setTooltip("Puts this mix in the QS's mix edit buffer so you hear it. Not stored until you Store it.");
     storeBtn.setTooltip("Saves this mix into one of the QS's 100 User mixes, replacing what was there.");
@@ -236,6 +242,8 @@ void MixTab::openMix(const qs::Mix& m, const juce::String& w, int number) {
     nameDirty = false;
     qslog::action("Mix editor: opened \"" + juce::String(mix.name()).trimEnd() + "\" from " + w);
     loadAll();
+    history.reset(mix.bytes());
+    undoBtns.refresh(history);
     // Not known here: once the QS has switched to the mix, ask for its mix edit buffer.
     const bool empty = std::all_of(mix.bytes().begin(), mix.bytes().end(), [](uint8_t b) { return b == 0; });
     if (empty && session.midi.isOpen()) {
@@ -274,6 +282,7 @@ void MixTab::changed(int ch, const qs::MixParam& p, int raw) {
     mix.setChannel(ch, p, raw);
     if (rows[ch] != nullptr) rows[ch]->dimIfOff();
     if (liveToggle.getToggleState() && session.playingMix) session.setActiveMix(mix);  // keyboard follows Enable/Keyboard switches
+    edited(juce::String(p.name) + " (ch " + juce::String(ch + 1) + ")");
     updateLcd();
     if (liveToggle.getToggleState() && session.midi.isOpen()) session.midi.send(qs::mixParamEdit(p, ch, raw + p.offset));
 }
@@ -281,6 +290,7 @@ void MixTab::changed(int ch, const qs::MixParam& p, int raw) {
 void MixTab::commonChanged(const qs::MixParam& p, int raw) {
     mix.setCommon(p, raw);
     updateLcd();
+    edited(p.name);
     if (liveToggle.getToggleState() && session.midi.isOpen()) session.midi.send(qs::mixParamEdit(p, 0, raw + p.offset));
 }
 
@@ -312,6 +322,8 @@ void MixTab::sysexReceived(const qs::Bytes& msg) {
         where = "QS mix edit buffer";
         userNumber = -1;
         loadAll();
+        history.reset(mix.bytes());
+        undoBtns.refresh(history);
         if (session.setStatus) session.setStatus("Loaded mix " + juce::String(mix.name()).trimEnd() + " from the QS.");
     }
 }
@@ -398,8 +410,8 @@ void MixTab::paint(juce::Graphics& g) { g.fillAll(theme::bg); }
 
 void MixTab::resized() {
     auto r = getLocalBounds().reduced(14);
-    auto top = r.removeFromTop(118);
-    lcd.setBounds(top.removeFromLeft(juce::jmin(520, top.getWidth() / 2)));
+    auto top = r.removeFromTop(150);
+    lcd.setBounds(top.removeFromLeft(juce::jmin(520, top.getWidth() / 2)).withHeight(118));
     top.removeFromLeft(16);
     auto row1 = top.removeFromTop(36);
     nameEdit.setBounds(row1.removeFromLeft(170));
@@ -420,10 +432,76 @@ void MixTab::resized() {
         b->setBounds(row2.removeFromLeft(juce::jmin(w, row2.getWidth())));
         row2.removeFromLeft(8);
     }
+    top.removeFromTop(6);
+    auto row3 = top.removeFromTop(28);
+    undoBtns.undo.setBounds(row3.removeFromLeft(80));
+    row3.removeFromLeft(6);
+    undoBtns.redo.setBounds(row3.removeFromLeft(80));
+    row3.removeFromLeft(14);
+    toolsBtn.setBounds(row3.removeFromLeft(140));
     r.removeFromTop(10);
     const int width = totalWidth(), rowH = 32, headH = 22;
     view.setBounds(r);
     content.setSize(width, headH + rowH * qs::kMixChannels);
     columns->setBounds(0, 0, width, headH);
     for (int i = 0; i < rows.size(); ++i) rows[i]->setBounds(0, headH + i * rowH, width, rowH);
+}
+
+// ---------------- undo, channel tools ----------------
+
+void MixTab::edited(const juce::String& label) {
+    history.changed(mix.bytes(), label);
+    undoBtns.refresh(history);
+}
+
+void MixTab::applyState(const qs::Bytes& state) {
+    mix = qs::Mix::fromData(state);
+    loadAll();
+    if (liveToggle.getToggleState() && session.midi.isOpen()) {
+        session.midi.send(mix.dump(100));
+        if (session.playingMix) session.setActiveMix(mix);
+    }
+    undoBtns.refresh(history);
+}
+
+bool MixTab::keyPressed(const juce::KeyPress& k) {
+    if (isUndoKey(k)) { if (auto st = history.undo()) applyState(*st); return true; }
+    if (isRedoKey(k)) { if (auto st = history.redo()) applyState(*st); return true; }
+    return false;
+}
+
+void MixTab::showTools() {
+    juce::PopupMenu copy, paste, swapFrom;
+    for (int ch = 0; ch < qs::kMixChannels; ++ch) {
+        const auto n = "Channel " + juce::String(ch + 1) + (mix.enabled(ch) ? "" : " (off)");
+        copy.addItem(100 + ch, n);
+        paste.addItem(200 + ch, n, channelClipboard.has_value());
+    }
+    for (int a = 0; a < qs::kMixChannels; ++a) {
+        juce::PopupMenu with;
+        for (int b = 0; b < qs::kMixChannels; ++b)
+            if (b != a) with.addItem(1000 + a * 16 + b, "with channel " + juce::String(b + 1));
+        swapFrom.addSubMenu("Channel " + juce::String(a + 1), with);
+    }
+    juce::PopupMenu m;
+    m.addSubMenu("Copy a channel", copy);
+    m.addSubMenu("Paste the copied channel into", paste, channelClipboard.has_value());
+    m.addSubMenu("Swap two channels", swapFrom);
+    m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&toolsBtn), [this](int r) {
+        if (r >= 100 && r < 116) {
+            channelClipboard = mix.channelBlock(r - 100);
+            if (session.setStatus) session.setStatus("Copied channel " + juce::String(r - 99) + ".");
+        } else if (r >= 200 && r < 216 && channelClipboard) {
+            mix.setChannelBlock(r - 200, *channelClipboard);
+            edited("paste into channel " + juce::String(r - 199));
+            applyState(mix.bytes());
+        } else if (r >= 1000) {
+            const int a = (r - 1000) / 16, b = (r - 1000) % 16;
+            const auto ba = mix.channelBlock(a), bb = mix.channelBlock(b);
+            mix.setChannelBlock(a, bb);
+            mix.setChannelBlock(b, ba);
+            edited("swap channels " + juce::String(a + 1) + " and " + juce::String(b + 1));
+            applyState(mix.bytes());
+        }
+    });
 }

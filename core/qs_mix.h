@@ -48,6 +48,10 @@ public:
     int bank(int ch) const;        // program "type" field: 0 User, 1-3 Preset 1-3, 4 GenMIDI, 5+ card banks
     bool enabled(int ch) const;
 
+    // A channel's 8 bytes, for copying or swapping channels.
+    Bytes channelBlock(int ch) const;
+    void setChannelBlock(int ch, const Bytes& block);
+
     Bytes dump(int number) const;  // opcode 0E; number 0-99 user mix, 100 = mix edit buffer
     const Bytes& bytes() const { return data; }
 

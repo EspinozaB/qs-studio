@@ -198,6 +198,8 @@ EffectsTab::EffectsTab(Session& s) : session(s) {
         const int c = configBox.getSelectedId() - 1;
         if (c < 0 || c == fx.config()) return;
         fx.setConfig(c);
+        history.changed(fx.bytes(), "configuration");
+        undoBtns.refresh(history);
         qslog::action("Effects editor: configuration " + juce::String(c + 1));
         if (liveToggle.getToggleState() && session.midi.isOpen()) {
             // The QS resets every effect setting to that configuration's defaults: read them back.
@@ -224,6 +226,10 @@ EffectsTab::EffectsTab(Session& s) : session(s) {
                  juce::dontSendNotification);
     note.setColour(juce::Label::textColourId, theme::dim);
     note.setFont(theme::uiFont(12.0f));
+    addAndMakeVisible(undoBtns.undo);
+    addAndMakeVisible(undoBtns.redo);
+    undoBtns.undo.onClick = [this] { if (auto st = history.undo()) applyState(*st); };
+    undoBtns.redo.onClick = [this] { if (auto st = history.redo()) applyState(*st); };
     getBtn.setTooltip("Loads the effect the QS is using now (its effect edit buffer).");
     sendBtn.setTooltip("Puts this effect in the QS's effect edit buffer so you hear it. Not stored.");
     storeBtn.setTooltip("Saves this effect into a User effect slot. On the QS, User effect n belongs to User program n.");
@@ -252,6 +258,8 @@ void EffectsTab::openEffects(const qs::Effects& e, const juce::String& w, int ed
     where = w;
     qslog::action("Effects editor: opened " + w + (fetch ? " (asking the QS)" : ""));
     rebuild();
+    history.reset(fx.bytes());
+    undoBtns.refresh(history);
     if (fetch) getFromQs();
 }
 
@@ -351,6 +359,8 @@ void EffectsTab::changed(const qs::EffectParam& p, int raw, bool isType) {
     fx.setRaw(p, raw);
     if (liveToggle.getToggleState() && session.midi.isOpen()) session.midi.send(qs::effectParamEdit(p, displayed(p, raw)));
     refreshCards();
+    history.changed(fx.bytes(), qs::effectShortName(p));
+    undoBtns.refresh(history);
     if (isType) rebuildPending = true;  // other parameters appear or go; rebuild outside the control's own callback
 }
 
@@ -380,6 +390,8 @@ void EffectsTab::sysexReceived(const qs::Bytes& msg) {
         fx = *e;
         if (where.isEmpty() || where == "No effect loaded") where = "QS effect edit buffer";
         rebuild();
+        history.reset(fx.bytes());
+        undoBtns.refresh(history);
         if (session.setStatus) session.setStatus("Loaded the " + juce::String(edit == 0 ? "program" : "mix") + " effect from the QS.");
     }
 }
@@ -456,8 +468,8 @@ void EffectsTab::paint(juce::Graphics& g) { g.fillAll(theme::bg); }
 
 void EffectsTab::resized() {
     auto r = getLocalBounds().reduced(14);
-    auto top = r.removeFromTop(118);
-    lcd.setBounds(top.removeFromLeft(juce::jmin(520, top.getWidth() / 2)));
+    auto top = r.removeFromTop(150);
+    lcd.setBounds(top.removeFromLeft(juce::jmin(520, top.getWidth() / 2)).withHeight(118));
     top.removeFromLeft(16);
     auto row1 = top.removeFromTop(32);
     targetLabel.setBounds(row1.removeFromLeft(70));
@@ -474,6 +486,11 @@ void EffectsTab::resized() {
         b->setBounds(row3.removeFromLeft(juce::jmin(b == &storeBtn ? 140 : 110, row3.getWidth())));
         row3.removeFromLeft(8);
     }
+    top.removeFromTop(6);
+    auto row4 = top.removeFromTop(28);
+    undoBtns.undo.setBounds(row4.removeFromLeft(80));
+    row4.removeFromLeft(6);
+    undoBtns.redo.setBounds(row4.removeFromLeft(80));
     r.removeFromTop(6);
     note.setBounds(r.removeFromBottom(34));
     view.setBounds(r);
@@ -543,4 +560,17 @@ void EffectsTab::layoutContent() {
     for (auto& b : blocks) content->cards.push_back({b.card, b.title(), {}, false});
     content->setSize(w, juce::jmax(bottom, 10));
     refreshCards();
+}
+
+void EffectsTab::applyState(const qs::Bytes& state) {
+    fx = qs::Effects::fromData(state);
+    rebuild();
+    if (liveToggle.getToggleState() && session.midi.isOpen()) session.midi.send(fx.editDump(edit));
+    undoBtns.refresh(history);
+}
+
+bool EffectsTab::keyPressed(const juce::KeyPress& k) {
+    if (isUndoKey(k)) { if (auto st = history.undo()) applyState(*st); return true; }
+    if (isRedoKey(k)) { if (auto st = history.redo()) applyState(*st); return true; }
+    return false;
 }

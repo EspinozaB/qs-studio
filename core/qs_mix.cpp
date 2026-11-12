@@ -114,6 +114,15 @@ int Mix::program(int ch) const { return channel(ch, kChannel[0]); }
 int Mix::bank(int ch) const { return channel(ch, kChannel[1]); }
 bool Mix::enabled(int ch) const { return channel(ch, kChannel[2]) != 0; }
 
+Bytes Mix::channelBlock(int ch) const {
+    const auto o = data.begin() + kChannelBase + kChannelBytes * ch;
+    return Bytes(o, o + kChannelBytes);
+}
+
+void Mix::setChannelBlock(int ch, const Bytes& b) {
+    if (b.size() == size_t(kChannelBytes)) std::copy(b.begin(), b.end(), data.begin() + kChannelBase + kChannelBytes * ch);
+}
+
 Bytes Mix::dump(int number) const {
     Bytes m{0xF0, 0x00, 0x00, 0x0E, kQsFamily, NewMixDump, uint8_t(number & 0x7F)};
     const auto packed = pack7(data.data(), kNewMixBytes);

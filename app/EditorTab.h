@@ -5,6 +5,7 @@
 #include <map>
 
 #include "Session.h"
+#include "Undo.h"
 #include "Theme.h"
 
 // One parameter as a knob, a drop-down or an on/off switch, with a caption.
@@ -109,6 +110,18 @@ private:
     juce::TextButton getBtn{"Get from QS"}, sendBtn{"Send to QS"}, storeBtn{"Store to User..."}, openBtn{"Open .syx"},
         saveBtn{"Save .syx"}, backBtn{"< All sounds"}, fxBtn{"Effect..."}, compareBtn{"Compare"};
     qs::Program original;  // as opened or received, for Compare
+    // Undo/redo and the tools menu (QS Store-mode jobs and the generators from MIDI Quest).
+    UndoHistory history;
+    UndoButtons undoBtns;
+    juce::TextButton toolsBtn{"Tools..."};
+    std::optional<qs::Bytes> soundClipboard;
+    void edited(const juce::String& label);         // after any change to prog
+    void applyState(const qs::Bytes& state);        // undo/redo/tools result: load and send
+    void replaceProgram(const qs::Program& p, const juce::String& label);
+    void showTools();
+    void randomizeDialog();
+    void blendDialog();
+    bool keyPressed(const juce::KeyPress& k) override;
     bool comparing = false;
     void setComparing(bool on);
     juce::OwnedArray<SoundPanel> panels;

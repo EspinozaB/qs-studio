@@ -4,6 +4,7 @@
 #include <JuceHeader.h>
 
 #include "Session.h"
+#include "Undo.h"
 #include "Theme.h"
 
 class MixTab : public juce::Component, private MidiLink::Listener, private juce::Timer {
@@ -51,4 +52,13 @@ private:
     juce::Component content;
     juce::OwnedArray<Row> rows;
     std::unique_ptr<juce::FileChooser> chooser;
+
+    UndoHistory history;
+    UndoButtons undoBtns;
+    juce::TextButton toolsBtn{"Channel tools..."};
+    std::optional<qs::Bytes> channelClipboard;
+    void edited(const juce::String& label);
+    void applyState(const qs::Bytes& state);
+    void showTools();
+    bool keyPressed(const juce::KeyPress& k) override;
 };

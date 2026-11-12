@@ -37,19 +37,21 @@ programs apart.
 10. Name lists exported as CSV.
 11. Session logs with MIDI traffic, for bug reports.
 
-## Still open before Sound Bridge work
+## 0.7.0
 
-Editor gaps (QS SoundEditor Pro, MIDI Quest):
+Editor gaps closed (QS SoundEditor Pro, MIDI Quest, Sound Bridge):
 - Undo and redo in the Program, Mix and Effects editors.
-- Sound tools in the Program Editor: copy, paste and swap a sound; start a new program from a clean default.
-- Mix tools: copy a channel to another channel.
-- Search across every saved library and backup (MIDI Quest's database).
-- Drag to reorder in the list (swap and copy cover it for now).
-- Generate programs by blending or randomizing (MIDI Quest). Low priority.
-- Drum pad monitor for e-drum setups (QS SoundEditor's Drum Kit Calibration). Low priority.
+- Program Editor tools: copy, paste, swap and reset sounds; new program from scratch; randomize; blend two programs.
+- Mix channel tools: copy, paste and swap channels.
+- Search across every saved library, backup and .syx file; drag to swap User programs.
+- Aftertouch: an on-screen Pressure slider, and a switch to block a controller's aftertouch.
+- MIDI monitor for keys and e-drum pads (softest and hardest velocity per note).
+- Card builder (Sound Bridge): WAVs to a QS card image with key splits, loops and a program per voice. Untested on hardware.
+- Check-up page: model and OS version, MIDI link test, every Global setting explained, User bank stats, card slot.
 
-Then the reviews of the Transfer (Backup, Move Banks), Capture (Record & Sample, Cards & ROM) and Setup (Connection,
-Global) pages, before the final pass on layout and ease of use.
+Next:
+- Hardware results for built cards; then velocity layers, drum voices and effects on built cards.
+- Reviews of the Transfer, Capture and Setup pages (on hold), then the final pass on layout and ease of use for new users.
 - QS SoundEditor Pro's full PDF help may list more. We'll add anything it shows.
 
 ## 0.6.0

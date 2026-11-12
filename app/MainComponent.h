@@ -4,6 +4,7 @@
 #include <map>
 
 #include "../core/qs_card.h"
+#include "../core/qs_cardbuild.h"
 #include "MidiLink.h"
 #include "Session.h"
 #include "Pages.h"
@@ -29,6 +30,8 @@ private:
     void openImage();
     void showCard();
     void exportWavs(bool sfz);
+    void buildFromWavs();
+    void saveBuiltCard(const qs::CardBuild& b);
     void testReader();
     void readCard();
     void dumpRom();
@@ -39,12 +42,16 @@ private:
     qs::CardImage card;
     juce::File cardFile;
     juce::TextButton openBtn{"Open card image"}, wavBtn{"Export WAVs"}, sfzBtn{"Export SFZ instruments"},
-        testBtn{"Test card reader"}, readBtn{"Read card from QS"}, writeBtn{"Write image to FLASH card"}, romBtn{"Dump internal sample ROM..."};
+        testBtn{"Test card reader"}, readBtn{"Read card from QS"}, writeBtn{"Write image to FLASH card"}, romBtn{"Dump internal sample ROM..."},
+        buildBtn{"Build a card from WAV files..."};
     juce::ComboBox sizeBox;
     juce::Label sizeLabel{{}, "Card size"};
     Section imageSec{"Look inside a card image", "Open a card image file from your computer (.img or .bin, for example a Sound Bridge image or a "
                                                  "card you read with the button below) to list its samples, programs and mixes, and export the "
                                                  "samples as WAV files or SFZ instruments for a software sampler."};
+    Section buildSec{"Make your own card", "WAV files named like Piano_C3.wav, Piano_C4.wav become one voice split across the keys; "
+                                           "loops are kept and each voice gets a program. New and untested on hardware: use a FLASH "
+                                           "card you can rewrite."};
     Section slotSec{"The card in the QS", "Power the QS off before inserting or removing a card. Test checks that the QS answers card "
                                           "requests. Read saves a FLASH sample card to an image; Write puts an image onto a FLASH card. "
                                           "RAM512 program cards can't be read or written this way: use Move Banks for those."};
@@ -98,6 +105,7 @@ private:
     juce::Slider velSlider{juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight};
     juce::TextButton notesOffBtn{"All notes off"}, keysBtn{"Hide keyboard"};
     juce::ToggleButton computerKeys{"Play from computer keys"};
+    juce::TextButton aftertouchBtn{"Aftertouch..."};
     juce::TooltipWindow tooltips{this, 600};
 
     // Computer keyboard as a piano (QS SoundEditor had this): A W S E D F T G Y H U J K O L P ; ' play notes,

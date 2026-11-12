@@ -252,14 +252,22 @@ EditorTab::EditorTab(Session& s) : session(s) {
         dumpDirty = true;
         lastDumpEdit = juce::Time::getMillisecondCounter();
         updateLcd();
+        edited("Name");
     };
     addAndMakeVisible(nameEdit);
     liveToggle.setToggleState(settings().getBoolValue("liveEdit", true), juce::dontSendNotification);
     liveToggle.setTooltip("Send each change to the QS as you make it");
     liveToggle.onClick = [this] { settings().setValue("liveEdit", liveToggle.getToggleState()); };
     for (juce::Component* c : std::initializer_list<juce::Component*>{&liveToggle, &getBtn, &sendBtn, &storeBtn, &openBtn, &saveBtn, &fxBtn,
-                                                                    &compareBtn})
+                                                                    &compareBtn, &undoBtns.undo, &undoBtns.redo, &toolsBtn})
         addAndMakeVisible(c);
+    undoBtns.undo.onClick = [this] { if (auto st = history.undo()) applyState(*st); };
+    undoBtns.redo.onClick = [this] { if (auto st = history.redo()) applyState(*st); };
+    toolsBtn.setTooltip("Copy, paste, swap or reset sounds; start a new program; randomize or blend programs.");
+    toolsBtn.onClick = [this] { showTools(); };
+    setWantsKeyboardFocus(false);
+    history.reset(prog.bytes());
+    undoBtns.refresh(history);
     fxBtn.setTooltip("Opens the effect this program is playing through, in the Effects editor.");
     fxBtn.onClick = [this] {
         if (editNumber == 0) session.effectsProgram = prog;
@@ -319,6 +327,8 @@ void EditorTab::openProgram(const qs::Program& p, const juce::String& w) {
     prog = p;
     original = p;
     setComparing(false);
+    history.reset(prog.bytes());
+    undoBtns.refresh(history);
     where = w;
     pending.clear();
     dumpDirty = false;
@@ -413,6 +423,7 @@ void EditorTab::paramChanged(int sound, const qs::ParamDef& d, int drum, int val
     for (auto* c : detailControls)
         if (&c->def != &d || c->sound != sound) c->load(prog);
     updateLcd();
+    edited(juce::String(d.name) + " (sound " + juce::String(sound + 1) + ")");
 }
 
 void EditorTab::setEnabled(int sound, bool on) {
@@ -428,6 +439,7 @@ void EditorTab::setEnabled(int sound, bool on) {
     }
     panels[sound]->load(prog);
     updateLcd();
+    edited("Sound " + juce::String(sound + 1) + (on ? " on" : " off"));
 }
 
 void EditorTab::timerCallback() {
@@ -470,6 +482,8 @@ void EditorTab::sysexReceived(const qs::Bytes& msg) {
         setComparing(false);
         flushNow();
         loadAll();
+        history.reset(prog.bytes());
+        undoBtns.refresh(history);
         if (session.setStatus) session.setStatus("Loaded " + juce::String(prog.name()).trimEnd() + " from the QS edit buffer.");
     }
 }
@@ -629,15 +643,15 @@ void EditorTab::paint(juce::Graphics& g) {
 
 void EditorTab::resized() {
     auto r = getLocalBounds().reduced(14);
-    auto top = r.removeFromTop(118);
-    lcd.setBounds(top.removeFromLeft(juce::jmin(560, top.getWidth() / 2)));
+    auto top = r.removeFromTop(124);
+    lcd.setBounds(top.removeFromLeft(juce::jmin(560, top.getWidth() / 2)).withHeight(118));
     top.removeFromLeft(16);
-    auto row1 = top.removeFromTop(36);
+    auto row1 = top.removeFromTop(34);
     nameEdit.setBounds(row1.removeFromLeft(180));
     row1.removeFromLeft(10);
     liveToggle.setBounds(row1.removeFromLeft(110));
-    top.removeFromTop(10);
-    auto row2 = top.removeFromTop(36);
+    top.removeFromTop(6);
+    auto row2 = top.removeFromTop(34);
     for (auto* b : {&getBtn, &sendBtn, &storeBtn, &openBtn, &saveBtn}) {
         b->setBounds(row2.removeFromLeft(juce::jmin(130, row2.getWidth())));
         row2.removeFromLeft(8);
@@ -646,6 +660,13 @@ void EditorTab::resized() {
     compareBtn.setBounds(row1.removeFromLeft(100));
     row1.removeFromLeft(8);
     fxBtn.setBounds(row1.removeFromLeft(100));
+    top.removeFromTop(6);
+    auto row3 = top.removeFromTop(30);
+    undoBtns.undo.setBounds(row3.removeFromLeft(80));
+    row3.removeFromLeft(6);
+    undoBtns.redo.setBounds(row3.removeFromLeft(80));
+    row3.removeFromLeft(14);
+    toolsBtn.setBounds(row3.removeFromLeft(120));
     r.removeFromTop(10);
 
     for (auto* p : panels) p->setVisible(!detailMode);
@@ -685,4 +706,138 @@ void EditorTab::resized() {
         y += ((to - from + cols - 1) / cols) * cellH + 8;
     }
     detailContent.setSize(cols * cellW, y);
+}
+
+// ---------------- undo, tools ----------------
+
+void EditorTab::edited(const juce::String& label) {
+    history.changed(prog.bytes(), label);
+    undoBtns.refresh(history);
+}
+
+void EditorTab::applyState(const qs::Bytes& state) {
+    if (auto p = qs::Program::fromData(state)) prog = *p;
+    pending.clear();
+    loadAll();
+    if (detailMode) showDetail(detailSound, detailSection, detailDrum);
+    if (liveToggle.getToggleState() && session.midi.isOpen()) session.midi.send(prog.editDump(editNumber));
+    dumpDirty = false;
+    undoBtns.refresh(history);
+}
+
+void EditorTab::replaceProgram(const qs::Program& p, const juce::String& label) {
+    prog = p;
+    history.changed(prog.bytes(), label);
+    applyState(prog.bytes());
+    qslog::action("Program editor: " + label);
+}
+
+bool EditorTab::keyPressed(const juce::KeyPress& k) {
+    if (isUndoKey(k)) { if (auto st = history.undo()) applyState(*st); return true; }
+    if (isRedoKey(k)) { if (auto st = history.redo()) applyState(*st); return true; }
+    return false;
+}
+
+void EditorTab::showTools() {
+    juce::PopupMenu copy, paste, swap, init;
+    for (int s = 0; s < qs::kSoundCount; ++s) {
+        const auto n = "Sound " + juce::String(s + 1) + (prog.isDrum(s) ? " (drums)" : "") + (prog.isEnabled(s) ? "" : " (off)");
+        copy.addItem(100 + s, n);
+        paste.addItem(200 + s, n, soundClipboard.has_value());
+        init.addItem(400 + s, n);
+        for (int t = s + 1; t < qs::kSoundCount; ++t) swap.addItem(300 + s * 4 + t, "Sounds " + juce::String(s + 1) + " and " + juce::String(t + 1));
+    }
+    juce::PopupMenu m;
+    m.addSectionHeader("Sounds");
+    m.addSubMenu("Copy a sound", copy);
+    m.addSubMenu("Paste the copied sound into", paste, soundClipboard.has_value());
+    m.addSubMenu("Swap two sounds", swap);
+    m.addSubMenu("Reset a sound to a plain default", init);
+    m.addSectionHeader("Programs");
+    m.addItem(1, "New program from scratch");
+    m.addItem(2, "Randomize this program...");
+    m.addItem(3, "Blend with another program...");
+    m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&toolsBtn), [this](int r) {
+        if (r >= 100 && r < 104) {
+            soundClipboard = prog.sound(r - 100);
+            if (session.setStatus) session.setStatus("Copied sound " + juce::String(r - 99) + ". Tools > Paste puts it into another sound.");
+        } else if (r >= 200 && r < 204 && soundClipboard) {
+            auto p = prog;
+            p.setSound(r - 200, *soundClipboard);
+            replaceProgram(p, "paste into sound " + juce::String(r - 199));
+        } else if (r >= 300 && r < 316) {
+            const int a = (r - 300) / 4, b = (r - 300) % 4;
+            auto p = prog;
+            p.swapSounds(a, b);
+            replaceProgram(p, "swap sounds " + juce::String(a + 1) + " and " + juce::String(b + 1));
+        } else if (r >= 400 && r < 404) {
+            auto p = prog;
+            p.initSound(r - 400, true);
+            replaceProgram(p, "reset sound " + juce::String(r - 399));
+        } else if (r == 1) {
+            replaceProgram(qs::Program::initProgram(), "new program");
+            where = "New program";
+            updateLcd();
+        } else if (r == 2) {
+            randomizeDialog();
+        } else if (r == 3) {
+            blendDialog();
+        }
+    });
+}
+
+void EditorTab::randomizeDialog() {
+    auto* w = new juce::AlertWindow("Randomize", "Nudges every amount (envelopes, filter, LFOs, levels, modulation) by a random step. "
+                                                 "Samples, volume and key ranges stay as they are. Undo takes it back.",
+                                    juce::MessageBoxIconType::QuestionIcon);
+    w->addComboBox("amount", {"A little (10%)", "Some (25%)", "A lot (50%)", "Wild (100%)"}, "How much");
+    w->getComboBoxComponent("amount")->setSelectedItemIndex(1);
+    w->addComboBox("choices", {"Keep waveforms, modes and routings", "Change those too"}, "Choices");
+    w->addButton("Randomize", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    w->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    w->enterModalState(true, juce::ModalCallbackFunction::create([this, w](int r) {
+        if (r != 1) return;
+        static const double amounts[] = {0.1, 0.25, 0.5, 1.0};
+        const double amount = amounts[juce::jlimit(0, 3, w->getComboBoxComponent("amount")->getSelectedItemIndex())];
+        const bool choices = w->getComboBoxComponent("choices")->getSelectedItemIndex() == 1;
+        replaceProgram(qs::randomizeProgram(prog, amount, choices, juce::Random::getSystemRandom().nextInt() | 1), "randomize");
+    }), true);
+}
+
+void EditorTab::blendDialog() {
+    // Programs QS Studio has the data for: every bank in the library.
+    struct Choice {
+        int bank, number;
+    };
+    auto choices = std::make_shared<std::vector<Choice>>();
+    juce::StringArray names;
+    for (int b = 0; b < int(kBanks.size()); ++b)
+        for (int n = 0; n < 128; ++n)
+            if (session.library.programs[size_t(b)][size_t(n)]) {
+                choices->push_back({b, n});
+                names.add(juce::String(kBanks[size_t(b)].title) + " " + juce::String(n).paddedLeft('0', 3) + "  " + session.library.nameOf(b, n));
+            }
+    if (names.isEmpty()) {
+        alert("Nothing to blend with", "Read a bank from the QS (Programs page) or load a .syx file first.");
+        return;
+    }
+    auto* w = new juce::AlertWindow("Blend", "Makes a program between this one and another. Amounts are mixed; samples, waveforms and "
+                                             "modes come from whichever program is nearer. Undo takes it back.",
+                                    juce::MessageBoxIconType::QuestionIcon);
+    w->addComboBox("other", names, "Blend with");
+    w->addComboBox("amount", {"10% of the other", "25%", "50% (half way)", "75%", "90%"}, "How far");
+    w->getComboBoxComponent("amount")->setSelectedItemIndex(2);
+    w->addButton("Blend", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    w->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    w->enterModalState(true, juce::ModalCallbackFunction::create([this, w, choices](int r) {
+        if (r != 1) return;
+        const int i = w->getComboBoxComponent("other")->getSelectedItemIndex();
+        if (i < 0 || i >= int(choices->size())) return;
+        static const double ts[] = {0.1, 0.25, 0.5, 0.75, 0.9};
+        const double t = ts[juce::jlimit(0, 4, w->getComboBoxComponent("amount")->getSelectedItemIndex())];
+        const auto& other = *session.library.programs[size_t((*choices)[size_t(i)].bank)][size_t((*choices)[size_t(i)].number)];
+        auto out = qs::blendPrograms(prog, other, t);
+        if (t >= 0.5) out.setName(prog.name());  // keep this program's name either way
+        replaceProgram(out, "blend");
+    }), true);
 }

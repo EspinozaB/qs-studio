@@ -23,11 +23,18 @@ public:
             c->onChange = [this, i](int v) { cc(session.global.controller[i], v); };
             addAndMakeVisible(c);
         }
-        for (juce::Component* c : std::initializer_list<juce::Component*>{&pitch, &mod, &volume}) addAndMakeVisible(c);
+        // Aftertouch (channel pressure) for keyboards that don't send it: push up while holding notes; springs back to 0.
+        pressure.setSpringBack(true);
+        pressure.setResetValue(0);
+        pressure.onChange = [this](int v) { session.sendPerformance(juce::MidiMessage::channelPressureChange(session.channel, v)); };
+        pressure.setTooltip("Aftertouch (channel pressure): push up while you hold notes; it drops back to 0 when you let go. "
+                            "For programs that use pressure, when your keyboard doesn't send it.");
+        for (juce::Component* c : std::initializer_list<juce::Component*>{&pitch, &mod, &volume, &pressure}) addAndMakeVisible(c);
         session.volume.addListener(this);
         // Follow the MIDI controller: its wheels and sliders move the ones on screen.
         session.controllerMoved = [this](const juce::MidiMessage& m) {
             if (m.isPitchWheel()) pitch.setValue(m.getPitchWheelValue() - 8192, false);
+            else if (m.isChannelPressure()) pressure.setValue(m.getChannelPressureValue(), false);
             else if (m.isController()) {
                 const int cc = m.getControllerNumber(), v = m.getControllerValue();
                 if (cc == 1) mod.setValue(v, false);
@@ -49,6 +56,7 @@ public:
     // Call when the model or the Global settings change.
     void updateLayout() {
         const bool one = session.hasOneControllerSlider();
+        pressure.setVisible(settings().getBoolValue("showAftertouch", false));
         for (int i = 0; i < 4; ++i) {
             ctrl[i]->setVisible(i == 0 || !one);
             ctrl[i]->setTooltip("Controller " + juce::String::charToString(juce::juce_wchar('A' + i)) + " sends CC" +
@@ -59,7 +67,9 @@ public:
         repaint();
     }
 
-    int preferredWidth() const { return kWheelBlock + 10 + (session.hasOneControllerSlider() ? 2 * (kFaderW + 22) : 5 * kFaderW) + 8; }
+    int preferredWidth() const {
+        return kWheelBlock + 10 + (session.hasOneControllerSlider() ? 2 * (kFaderW + 22) : 5 * kFaderW) + (pressure.isVisible() ? kFaderW + 14 : 0) + 8;
+    }
 
     void paint(juce::Graphics& g) override {
         auto r = getLocalBounds().toFloat();
@@ -83,6 +93,7 @@ public:
         label(pitch, "PITCH");
         label(mod, "MODULATION");
         label(volume, "VOLUME");
+        if (pressure.isVisible()) label(pressure, "PRESSURE");
         // The QS6.2 / QS8.2 print what the sliders do by default: Filter, Delay, Envelope, Reverb.
         const bool silver = session.panelModel().endsWith(".2");
         static const char* silverNames[] = {"FILTER", "DELAY", "ENVELOPE", "REVERB"};
@@ -110,6 +121,10 @@ public:
         volume.setBounds(r.removeFromLeft(fw));
         for (auto* c : ctrl)
             if (c->isVisible()) c->setBounds(r.removeFromLeft(fw));
+        if (pressure.isVisible()) {
+            r.removeFromLeft(14);
+            pressure.setBounds(r.removeFromLeft(kFaderW));
+        }
     }
 
 private:
@@ -128,6 +143,6 @@ private:
 
     Session& session;
     hw::Wheel pitch{-8192, 8191, 0, true}, mod{0, 127, 0, false};
-    hw::Fader volume{0, 127, 127};
+    hw::Fader volume{0, 127, 127}, pressure{0, 127, 0};
     juce::OwnedArray<hw::Fader> ctrl;
 };

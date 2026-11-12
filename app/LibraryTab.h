@@ -6,7 +6,11 @@
 #include "Session.h"
 #include "Theme.h"
 
-class LibraryTab : public juce::Component, private juce::ListBoxModel, private juce::Timer {
+class LibraryTab : public juce::Component,
+                   public juce::DragAndDropContainer,
+                   public juce::DragAndDropTarget,
+                   private juce::ListBoxModel,
+                   private juce::Timer {
 public:
     explicit LibraryTab(Session& s);
     ~LibraryTab() override;
@@ -54,6 +58,10 @@ private:
     void saveBankAsSyx();
     void sendBankToUser();
     void swapOrCopy();
+    void moveUserProgram(int a, int b, bool swap);
+    juce::var getDragSourceDescription(const juce::SparseSet<int>& rowsSelected) override;
+    bool isInterestedInDragSource(const SourceDetails&) override;
+    void itemDropped(const SourceDetails&) override;
     void exportNames();
     void sendCachedToEditBuffer();
     void storeToUser();

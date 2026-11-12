@@ -327,6 +327,7 @@ struct Session : private juce::MidiKeyboardState::Listener, private juce::MidiIn
     }
     // Notes from the on-screen keyboard and the controller go to the QS; the sound player can turn that off.
     std::atomic<bool> notesToQs{true};
+    std::atomic<bool> passAftertouch{true};  // the controller's aftertouch goes on to the QS
 
     // Transfer pace (Connection page): stretches the waits in long reads for slow or flaky MIDI interfaces.
     static int paced(int ms) {
@@ -553,8 +554,11 @@ private:
     // From the MIDI controller (MIDI input thread).
     void handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMessage& in) override {
         if (in.isSysEx() || in.isActiveSense() || in.isMidiClock() || in.getChannel() == 0) return;
+        if (auto* mon = monitorInput.load()) mon->push(in);  // the MIDI monitor sees what the controller really sent
         auto m = in;
         m.setChannel(channel);
+        // Some controllers send aftertouch nobody asked for (or too much of it): it can be blocked (bottom bar, Aftertouch).
+        if ((m.isAftertouch() || m.isChannelPressure()) && !passAftertouch.load()) return;
         if (m.isNoteOnOrOff() || m.isPitchWheel() || m.isController() || m.isAftertouch() || m.isChannelPressure()) {
             if (notesToQs) sendPerformance(m);
         } else {
@@ -576,6 +580,11 @@ private:
 public:
     std::function<void(const juce::MidiMessage&)> controllerMoved;  // a message from the MIDI controller, on the message thread
     std::atomic<juce::MidiMessageCollector*> playerInput{nullptr};   // the sound player, while it's listening
+    struct MonitorSink {
+        virtual ~MonitorSink() = default;
+        virtual void push(const juce::MidiMessage&) = 0;
+    };
+    std::atomic<MonitorSink*> monitorInput{nullptr};  // the MIDI monitor, while it's open
     // True while the controller's notes are being shown on the on-screen keyboard (they're already sent).
     static bool isEcho() { return echoing(); }
 

@@ -1,6 +1,7 @@
 #include "qs_program.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace qs {
 
@@ -141,5 +142,121 @@ Bytes globalRequest() { return {0xF0, 0x00, 0x00, 0x0E, kQsFamily, GlobalRequest
 
 Bytes editProgramRequest(int n) { return {0xF0, 0x00, 0x00, 0x0E, kQsFamily, EditProgramRequest, uint8_t(n & 0x7F), 0xF7}; }
 Bytes modeSelect(int mode) { return {0xF0, 0x00, 0x00, 0x0E, kQsFamily, ModeSelect, uint8_t(mode & 1), 0xF7}; }
+
+}  // namespace qs
+
+namespace qs {
+
+Bytes Program::sound(int s) const {
+    const auto o = data.begin() + soundByteOffset(s);
+    return Bytes(o, o + kSoundBytes);
+}
+
+void Program::setSound(int s, const Bytes& block) {
+    if (block.size() != size_t(kSoundBytes)) return;
+    std::copy(block.begin(), block.end(), data.begin() + soundByteOffset(s));
+}
+
+void Program::swapSounds(int a, int b) {
+    const auto sa = sound(a), sb = sound(b);
+    setSound(a, sb);
+    setSound(b, sa);
+}
+
+void Program::initSound(int s, bool enabled) {
+    std::fill(data.begin() + soundByteOffset(s), data.begin() + soundByteOffset(s) + kSoundBytes, uint8_t(0));
+    for (int i = 0; i < keyboardParamCount(); ++i) {
+        const auto& p = keyboardParam(i);
+        if (p.name[0] != 0) setValue(s, p, 0);  // signed amounts centred, everything else at its first choice
+    }
+    auto set = [&](const char* name, int v) {
+        const int i = findKeyboardParam(name);
+        if (i >= 0) setValue(s, keyboardParam(i), v);
+    };
+    set("Sample number", 1);
+    set("Volume", 99);
+    set("Filter frequency", 99);
+    set("Filter keyboard track", 0);
+    set("High note limit", 127);
+    set("Amp env attack", 0);
+    set("Amp env decay", 0);
+    set("Amp env sustain", 99);
+    set("Amp env release", 10);
+    set("Amp env level", 99);
+    set("Pitch lfo speed", 50);
+    set("Filter lfo speed", 50);
+    set("Amp lfo speed", 50);
+    for (int k = 0; k <= 10; ++k) set(("Tracking point " + std::to_string(k)).c_str(), k * 10);
+    set("Enable", enabled ? 1 : 0);
+}
+
+Program Program::initProgram() {
+    Program p;
+    p.setName("Init Prog");
+    for (int s = 0; s < kSoundCount; ++s) p.initSound(s, s == 0);
+    return p;
+}
+
+bool isChoiceParam(const ParamDef& p) {
+    const std::string n = p.name;
+    for (const char* w : {"group", "number", "waveform", "mode", "source", "destination", "trig", "type", "gate", "Output",
+                          "bus", "Enable", "sustain pedal", "Tracking input", "Portamento mode", "curve", "Overlap"})
+        if (n.find(w) != std::string::npos) return true;
+    return p.limit <= 3;
+}
+
+namespace {
+template <typename F>
+void forEachParam(const Program& ref, int s, F f) {
+    if (ref.isDrum(s)) {
+        for (int i = 0; i < drumParamCount(); ++i)
+            for (int d = 0; d < kDrumsPerSound; ++d) f(drumParam(i), d);
+    } else {
+        for (int i = 0; i < keyboardParamCount(); ++i)
+            if (keyboardParam(i).name[0] != 0) f(keyboardParam(i), 0);
+    }
+}
+}  // namespace
+
+Program blendPrograms(const Program& a, const Program& b, double t) {
+    Program out = t < 0.5 ? a : b;
+    for (int s = 0; s < kSoundCount; ++s) {
+        if (a.isDrum(s) != b.isDrum(s)) continue;  // a drum sound and a keyboard sound don't blend: keep the nearer one
+        forEachParam(a, s, [&](const ParamDef& p, int d) {
+            if (isChoiceParam(p)) return;
+            const double va = a.raw(s, p, d), vb = b.raw(s, p, d);
+            out.setRaw(s, p, int(std::lround(va + (vb - va) * t)), d);
+        });
+    }
+    return out;
+}
+
+Program randomizeProgram(const Program& src, double amount, bool includeChoices, uint32_t seed) {
+    Program out = src;
+    uint32_t x = seed ? seed : 0x9E3779B9u;
+    auto rnd = [&] {  // xorshift: deterministic per seed, so a result can be reproduced
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        return double(x) / 4294967296.0;
+    };
+    for (int s = 0; s < kSoundCount; ++s) {
+        if (!src.isEnabled(s)) continue;
+        forEachParam(src, s, [&](const ParamDef& p, int d) {
+            const std::string n = p.name;
+            if (n.find("Sample") != std::string::npos || n.find("Enable") != std::string::npos || n.find("mode (=") != std::string::npos ||
+                n.find("note limit") != std::string::npos || n.find("Volume") != std::string::npos)
+                return;  // keep the sound playable and recognisable
+            const int lim = src.editLimit(s, p, d);
+            if (isChoiceParam(p)) {
+                if (includeChoices && rnd() < amount) out.setRaw(s, p, int(rnd() * (lim + 1)) % (lim + 1), d);
+                return;
+            }
+            const int v = src.raw(s, p, d) + int(std::lround((rnd() * 2.0 - 1.0) * amount * lim));
+            out.setRaw(s, p, std::clamp(v, 0, lim), d);
+        });
+    }
+    return out;
+}
 
 }  // namespace qs

@@ -58,10 +58,27 @@ public:
 
     const Bytes& bytes() const { return data; }
 
+    // Whole sounds (each is an 85-byte block, keyboard or drum).
+    Bytes sound(int s) const;
+    void setSound(int s, const Bytes& block);
+    void swapSounds(int a, int b);
+    // QS Studio's clean starting point for a keyboard sound (not the QS's own INIT values, which aren't documented):
+    // the first Piano sample, full volume, filter open, a plain organ-style envelope, no modulation.
+    void initSound(int s, bool enabled);
+    static Program initProgram();  // "Init Prog", sound 1 on, sounds 2-4 off
+
 private:
     int bitBase(int sound, const ParamDef& p, int drum) const { return soundByteOffset(sound) * 8 + p.lowBit + drum * kDrumStrideBits; }
     Bytes data;
 };
+
+// True for parameters that pick something (sample, waveform, mode, source...) rather than set an amount:
+// blending and randomizing leave them alone or take them whole.
+bool isChoiceParam(const ParamDef& p);
+// t = 0 gives a, 1 gives b; amounts in between are interpolated, choices come from the nearer program.
+Program blendPrograms(const Program& a, const Program& b, double t);
+// Moves each amount by up to +/- amount (0-1) of its range; choices change only if includeChoices (samples never do).
+Program randomizeProgram(const Program& p, double amount, bool includeChoices, uint32_t seed);
 
 // Opcode 10 live edit. mode: 0 Global, 1 Mix, 2 Program, 3 Effects. value is the displayed (signed) value.
 Bytes paramEdit(int mode, int func, int soundOrBus, int page, int channel, int pot, int value);

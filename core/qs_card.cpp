@@ -169,7 +169,9 @@ bool loadCardImage(const Bytes& raw, CardImage& c, std::string& error) {
         while (!c.cardName.empty() && c.cardName.back() == ' ') c.cardName.pop_back();
         for (size_t i = kHeader + 24; i + 6 <= kFirstVoice; i += 6) {
             std::string g(reinterpret_cast<const char*>(&d[i]), 6);
-            if (g.find_first_not_of(' ') != std::string::npos && printable(&d[i], 6)) c.groups.push_back(g);
+            if (!printable(&d[i], 6)) g = "      ";
+            c.groupSlots.push_back(g);
+            if (g.find_first_not_of(' ') != std::string::npos) c.groups.push_back(g);
         }
         parseVoices(c);
         checkSampleByteOrder(c);
@@ -259,8 +261,9 @@ std::string voiceGroupName(const CardImage& c, int g) {
                                  "Synth", "Wave", "Noise", "Voice", "Ethnic", "Drums", "Percussion", "Sound FX"};
     static const char* drums[] = {"Kick", "Snare", "Toms", "Cymbal", "Percussion", "Sound FX", "Wave"};
     if (g >= 0 && g < 16) return keys[g];
-    if (!c.isRom && g >= 0 && g < int(c.groups.size())) {
-        std::string n = c.groups[size_t(g)];
+    const int slot = g >= 16 && g < 24 ? g - 16 : g >= 55 && g < 61 ? g - 55 + 8 : -1;
+    if (!c.isRom && slot >= 0 && slot < int(c.groupSlots.size())) {
+        std::string n = c.groupSlots[size_t(slot)];
         while (!n.empty() && n.back() == ' ') n.pop_back();
         if (!n.empty()) return n;
     }

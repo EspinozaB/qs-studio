@@ -9,6 +9,23 @@ Back up both synths before anything that writes to them.
 - [ ] Connection: pick MIDI in/out, Connect. The pill says "Connected to your QS6 (OS ...)". Same for the QSR.
 - [ ] Switching synths: the panel look changes, and `QSStudio.QS6.library` / `QSStudio.QSR.library` both appear in `QS Studio Data`.
 
+## 0.7.0: what's new to test
+- [ ] **Undo / Redo** (buttons, or Ctrl+Z / Ctrl+Y; Cmd on a Mac) in the Program, Mix and Effects editors. With Live edit on,
+      the QS follows the undo.
+- [ ] **Program Editor > Tools...:** copy a sound and paste it into another; swap two sounds; reset a sound; New program from
+      scratch; Randomize (try 20% first); Blend with another program. Listen on the QS after each.
+- [ ] **Mix Editor > Channel tools...:** copy, paste and swap channels.
+- [ ] **Programs > Bank tools... > Search everything saved:** type part of a name; double-click a result to open it.
+- [ ] **Drag a User program onto another** in the Programs list (connected): it asks, then swaps them on the QS.
+- [ ] **Aftertouch...** (bottom bar): the Pressure slider sends aftertouch from the screen; switching off "Pass my controller's
+      aftertouch" stops a controller's pressure reaching the QS. Try a patch that uses aftertouch.
+- [ ] **Aftertouch... > MIDI monitor:** hit keys or pads soft and hard; it shows each note's softest and hardest velocity.
+- [ ] **Cards & ROM > Build a card from WAV files...:** pick a few WAVs (name a set like Piano_C2.wav, Piano_C3.wav,
+      Piano_C4.wav to get one split voice). Play the result on the Sound Player. Then, only with a FLASH card you can rewrite:
+      Write image to FLASH card, and see whether the QS lists the voices (card sample groups) and the programs play them.
+      This is the one we most need hardware results for.
+- [ ] **Setup > Check-up:** Run the check-up with the QS connected; save the report and send it, whether it looks right or not.
+
 ## 0.6.2: fixes to check
 - [ ] **Sound Player with the Classical card:** notes stop when you let go, and playing more notes doesn't build up a whine.
       (The cause: the player added its sound onto a buffer that still held the last block, so every block fed the next.)

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(QSStudio VERSION 0.6.2 LANGUAGES C CXX)
+project(QSStudio VERSION 0.7.0 LANGUAGES C CXX)
 # Release stage shown with the version: pre-alpha, alpha, beta, rc.1 ... and "" for a final release. See README "Versions".
 set(QS_STAGE "pre-alpha")
 
@@ -9,7 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 # Core library: no JUCE, testable anywhere.
-add_library(qscore STATIC core/qs_sysex.cpp core/qs_card.cpp core/qs_program.cpp core/qs_samples.cpp core/qs_factory.cpp core/qs_mix.cpp core/qs_effects.cpp)
+add_library(qscore STATIC core/qs_sysex.cpp core/qs_card.cpp core/qs_program.cpp core/qs_samples.cpp core/qs_factory.cpp core/qs_mix.cpp core/qs_effects.cpp core/qs_cardbuild.cpp)
 target_include_directories(qscore PUBLIC core)
 set_target_properties(qscore PROPERTIES POSITION_INDEPENDENT_CODE ON)  # also linked into the plugin
 

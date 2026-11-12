@@ -33,8 +33,12 @@ public:
             return false;
         }
         input->start();
+        inPort = inName;
+        outPort = outName;
         return true;
     }
+    juce::String inName() const { return inPort; }
+    juce::String outName() const { return outPort; }
 
     void close() {
         if (input) input->stop();
@@ -124,6 +128,8 @@ private:
     }
 
     std::unique_ptr<juce::MidiInput> input;
+
+    juce::String inPort, outPort;
     std::unique_ptr<juce::MidiOutput> output;
     juce::CriticalSection lock, outLock;
     std::deque<qs::Bytes> queue;

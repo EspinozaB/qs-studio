@@ -27,7 +27,8 @@ struct CardImage {
     Bytes data;                       // normalized: big-endian words
     std::vector<std::string> fixes;   // what load() corrected
     std::string cardName;
-    std::vector<std::string> groups;
+    std::vector<std::string> groups;      // the card's group names that aren't blank
+    std::vector<std::string> groupSlots;  // all 14 name slots: 0-7 = keyboard groups 16-23, 8-13 = drum groups 55-60
     std::vector<Voice> voices;
     std::vector<std::string> programNames;  // 128
     std::vector<std::string> mixNames;      // 100

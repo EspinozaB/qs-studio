@@ -1,10 +1,14 @@
 #include "MainComponent.h"
 
 #include "CardJobs.h"
+
 #include "EditorTab.h"
 #include "EffectsTab.h"
 #include "LibraryTab.h"
 #include "MixTab.h"
+#include "Undo.h"
+#include "MidiMonitor.h"
+#include "Diagnostics.h"
 #include "PlayerTab.h"
 #include "RecorderTab.h"
 
@@ -90,7 +94,7 @@ static qs::Bytes toBytes(const juce::MemoryBlock& mb) {
 
 // ---------- Card tools ----------
 CardTab::CardTab(MidiLink& m) : midi(m) {
-    for (juce::Component* c : std::initializer_list<juce::Component*>{&imageSec, &slotSec, &romSec, &openBtn, &wavBtn, &sfzBtn, &testBtn, &readBtn, &writeBtn, &romBtn, &sizeBox, &sizeLabel, &info})
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&imageSec, &buildSec, &buildBtn, &slotSec, &romSec, &openBtn, &wavBtn, &sfzBtn, &testBtn, &readBtn, &writeBtn, &romBtn, &sizeBox, &sizeLabel, &info})
         addAndMakeVisible(c);
     setupLog(info);
     sizeBox.addItem("512 KB (RAM512)", 4);
@@ -107,6 +111,8 @@ CardTab::CardTab(MidiLink& m) : midi(m) {
     readBtn.onClick = [this] { readCard(); };
     writeBtn.onClick = [this] { writeCard(); };
     romBtn.onClick = [this] { dumpRom(); };
+    buildBtn.onClick = [this] { buildFromWavs(); };
+    buildBtn.setTooltip("Makes a QS card image (.img) from your own WAV files, like Alesis Sound Bridge did.");
     openBtn.setTooltip("Opens a card image file (.img/.bin) on your computer to look at its samples, programs and mixes.");
     testBtn.setTooltip("Asks the QS for the first 1 KB of its card slot. Some units answer with their built-in sample ROM instead.");
     readBtn.setTooltip("Reads a FLASH card in the slot into an .img file. RAM program cards (RAM512) can't be read this way.");
@@ -183,6 +189,88 @@ void CardTab::exportWavs(bool sfz) {
                              ::info("Exported", juce::String(int(samples.size())) + " samples" +
                                                     (sfz ? " and " + juce::String(n) + " SFZ instruments" : juce::String()) + " in\n" +
                                                     out.getFullPathName());
+                         });
+}
+
+void CardTab::buildFromWavs() {
+    chooser = std::make_unique<juce::FileChooser>("Pick the WAV files for the card", settingsDir(), "*.wav;*.WAV");
+    chooser->launchAsync(
+        juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::canSelectMultipleItems,
+        [this](const juce::FileChooser& fc) {
+            auto files = fc.getResults();
+            if (files.isEmpty()) return;
+            juce::MouseCursor::showWaitCursor();
+            std::vector<qs::NamedWav> wavs;
+            juce::StringArray problems;
+            for (auto& f : files) {
+                juce::MemoryBlock mb;
+                qs::NamedWav w;
+                w.fileName = f.getFileName().toStdString();
+                std::string err;
+                if (!f.loadFileAsData(mb) || !qs::readWav(toBytes(mb), w.wav, err)) {
+                    problems.add(f.getFileName() + ": " + juce::String(err.empty() ? "can't read it" : err));
+                    continue;
+                }
+                wavs.push_back(std::move(w));
+            }
+            juce::MouseCursor::hideWaitCursor();
+            if (wavs.empty()) { ::info("No samples", "None of the files could be read.\n" + problems.joinIntoString("\n")); return; }
+            std::vector<std::string> notes;
+            qs::CardBuild b;
+            b.voices = qs::voicesFromWavs(wavs, notes);
+            double seconds = 0;
+            for (auto& w : wavs) seconds += double(w.wav.pcm.size()) / qs::kCardRate;
+            for (auto& n : notes) problems.add(juce::String(n));
+            juce::String summary = juce::String(int(wavs.size())) + " files make " + juce::String(int(b.voices.size())) + " voices, " +
+                                   juce::String(seconds, 1) + " s of audio (an 8 MB card holds about 87 s at 48 kHz).\n";
+            for (size_t i = 0; i < b.voices.size() && i < 8; ++i)
+                summary << "\n  " << juce::String(b.voices[i].name).substring(0, 10) << ": " << int(b.voices[i].zones.size()) << " sample"
+                        << (b.voices[i].zones.size() == 1 ? "" : "s");
+            if (b.voices.size() > 8) summary << "\n  ...and " << int(b.voices.size() - 8) << " more";
+            if (b.voices.size() > 127) problems.add("More than 127 voices: only the first 127 fit in one group, the rest go in the next groups.");
+            for (size_t i = 0; i < b.voices.size(); ++i) b.voices[i].group = 16 + int(i / 127);
+            if (!problems.isEmpty()) summary << "\n\nNotes:\n" << problems.joinIntoString("\n");
+            auto* w = new juce::AlertWindow("Build a card", summary, juce::MessageBoxIconType::NoIcon);
+            w->addTextEditor("name", files[0].getParentDirectory().getFileName().substring(0, 14), "Card name (14 letters)");
+            w->addTextEditor("group", "User", "Sample group name on the QS (6 letters)");
+            w->addButton("Build and save", 1, juce::KeyPress(juce::KeyPress::returnKey));
+            w->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+            w->enterModalState(true, juce::ModalCallbackFunction::create([this, w, b](int r) mutable {
+                if (r != 1) return;
+                b.cardName = w->getTextEditorContents("name").substring(0, 14).toStdString();
+                const auto g = w->getTextEditorContents("group").substring(0, 6).toStdString();
+                b.groupNames.assign(8, g);
+                saveBuiltCard(b);
+            }), true);
+        });
+}
+
+void CardTab::saveBuiltCard(const qs::CardBuild& b) {
+    qs::BuildResult res;
+    std::string err;
+    if (!qs::buildCard(b, res, err)) { ::info("Can't build the card", err); return; }
+    auto dir = settingsDir().getChildFile("Cards");
+    dir.createDirectory();
+    const auto name = juce::String(qs::safeName(b.cardName.empty() ? "My card" : b.cardName));
+    chooser = std::make_unique<juce::FileChooser>("Save the card image as", dir.getChildFile(name + ".img"), "*.img");
+    chooser->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
+                         [this, res](const juce::FileChooser& fc) {
+                             auto f = fc.getResult();
+                             if (f == juce::File()) return;
+                             f = f.withFileExtension("img");
+                             if (!f.replaceWithData(res.image.data(), res.image.size())) { ::info("Can't save", f.getFullPathName()); return; }
+                             std::string err;
+                             if (!qs::loadCardImage(res.image, card, err)) { ::info("Built, but can't read it back", err); return; }
+                             cardFile = f;
+                             qslog::action("Built card " + f.getFullPathName() + ", " + juce::String(res.secondsUsed(), 1) + " s");
+                             showCard();
+                             appendLine(info, "\nBUILT " + f.getFullPathName() + "\n" + juce::String(res.secondsUsed(), 1) + " s of audio, " +
+                                                  juce::String(int(res.image.size() / 1024)) + " KB image (" +
+                                                  juce::String(100.0 * double(res.image.size()) / (8.0 * 1024 * 1024), 0) + "% of an 8 MB card)");
+                             for (auto& n : res.notes) appendLine(info, "  " + juce::String(n));
+                             info.moveCaretToTop(false);
+                             ::info("Card built", "Saved " + f.getFileName() + ".\n\nPlay it on the Sound Player page, or put a FLASH card in "
+                                                  "the QS and click Write image to FLASH card.");
                          });
 }
 
@@ -308,6 +396,8 @@ void CardTab::resized() {
         b->setBounds(row.removeFromLeft(b == &sfzBtn ? 190 : 150));
         row.removeFromLeft(8);
     }
+    auto bsec = place(buildSec, 40);
+    buildBtn.setBounds(bsec.removeFromTop(34).removeFromLeft(240));
     auto s = place(slotSec, 80);
     row = s.removeFromTop(32);
     sizeLabel.setBounds(row.removeFromLeft(72));
@@ -343,6 +433,7 @@ MainComponent::MainComponent() {
     own(fxEditor);
     connection = new ConnectionPage(session);
     globalPage = new GlobalPage(session);
+    auto* checkup = own(new DiagnosticsPage(session));
     auto* backup = new BackupPage(session);
     auto* move = new MoveBanksPage(session, *backup, *library);
     move->goToBackup = [this] { showPageNamed("Backup & Restore"); };
@@ -411,6 +502,10 @@ MainComponent::MainComponent() {
          "MIDI settings stored in the synth: controller numbers, Program Select and General MIDI mode.",
          "- Program Select must not be Off, or QS Studio can't change programs.",
          "Controller numbers, Program Select, General MIDI", globalPage},
+        {"Setup", "Check-up",
+         "Ask the QS everything QS Studio can over MIDI and explain the answers. Changes nothing.",
+         "- Run it when something doesn't work, and save the report for a bug report.",
+         "Model, OS version, MIDI link test, Globals, User bank, card slot", checkup},
     };
     std::vector<Sidebar::Item> items;
     for (auto& p : pages) {
@@ -556,6 +651,35 @@ MainComponent::MainComponent() {
                             "Typing in a text box never plays.");
     computerKeys.onClick = [this] { settings().setValue("computerKeys", computerKeys.getToggleState()); };
     addAndMakeVisible(computerKeys);
+    session.passAftertouch = settings().getBoolValue("passAftertouch", true);
+    aftertouchBtn.setTooltip("Aftertouch (key pressure): show an on-screen Pressure slider for keyboards that don't send it, "
+                             "or stop your controller's aftertouch reaching the QS.");
+    aftertouchBtn.onClick = [this] {
+        juce::PopupMenu m;
+        m.addItem(1, "Show the Pressure slider (aftertouch from the screen)", true, settings().getBoolValue("showAftertouch", false));
+        m.addItem(2, "Pass my controller's aftertouch to the QS", true, session.passAftertouch.load());
+        m.addSeparator();
+        m.addItem(3, "MIDI monitor: check the velocity of each key or drum pad...");
+        m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&aftertouchBtn), [this](int r) {
+            if (r == 1) {
+                settings().setValue("showAftertouch", !settings().getBoolValue("showAftertouch", false));
+                perf.updateLayout();
+                resized();
+            } else if (r == 2) {
+                session.passAftertouch = !session.passAftertouch.load();
+                settings().setValue("passAftertouch", session.passAftertouch.load());
+            } else if (r == 3) {
+                juce::DialogWindow::LaunchOptions o;
+                o.content.setOwned(new MidiMonitor(session));
+                o.dialogTitle = "MIDI monitor";
+                o.dialogBackgroundColour = theme::bg;
+                o.useNativeTitleBar = true;
+                o.resizable = true;
+                o.launchAsync();
+            }
+        });
+    };
+    addAndMakeVisible(aftertouchBtn);
     setWantsKeyboardFocus(true);
     notesOffBtn.setTooltip("Stops any stuck notes on the QS");
     keysBtn.setClickingTogglesState(true);
@@ -659,6 +783,7 @@ void MainComponent::updatePill() {
 void MainComponent::sysexReceived(const qs::Bytes& msg) {
     if (session.checkReply(msg)) return;
     if (auto d = qs::parseDeviceReply(msg)) {
+        if (session.midi.jobsRunning > 0 && session.deviceName.isNotEmpty()) return;  // a check-up asking again: nothing changed
         qslog::action("The synth says it is a " + juce::String(d->model) + ", OS " + juce::String(d->version));
         session.deviceName = juce::String(d->model) + " v" + juce::String(d->version);
         settings().setValue("lastModel", juce::String(d->model));
@@ -733,6 +858,8 @@ void MainComponent::resized() {
     velSlider.setBounds(bar.removeFromLeft(200));
     bar.removeFromLeft(12);
     computerKeys.setBounds(bar.removeFromLeft(190));
+    bar.removeFromLeft(8);
+    aftertouchBtn.setBounds(bar.removeFromLeft(110).reduced(0, 2));
     bar.removeFromLeft(12);
     statusLabel.setBounds(bar);
     perf.setVisible(!hidden);
@@ -763,6 +890,12 @@ const char* const kNoteKeys = "awsedftgyhujkolp;'";
 }
 
 bool MainComponent::keyPressed(const juce::KeyPress& k) {
+    // Ctrl+Z / Ctrl+Y with nothing focused: hand them to the page showing (the editors keep undo histories).
+    if (isUndoKey(k) || isRedoKey(k)) {
+        if (current >= 0 && current < int(pages.size()) && pages[size_t(current)].comp != nullptr)
+            return pages[size_t(current)].comp->keyPressed(k);
+        return false;
+    }
     if (!computerKeys.getToggleState()) return false;
     const auto c = juce::CharacterFunctions::toLowerCase(k.getTextCharacter());
     if (k.getModifiers().isCommandDown() || k.getModifiers().isAltDown()) return false;

@@ -7,6 +7,7 @@
 #include <optional>
 
 #include "Session.h"
+#include "Undo.h"
 #include "Theme.h"
 
 class EffectsTab : public juce::Component, private MidiLink::Listener, private juce::Timer {
@@ -70,4 +71,9 @@ private:
     juce::OwnedArray<Control> controls;
     std::vector<Block> blocks;
     std::unique_ptr<juce::FileChooser> chooser;
+
+    UndoHistory history;
+    UndoButtons undoBtns;
+    void applyState(const qs::Bytes& state);
+    bool keyPressed(const juce::KeyPress& k) override;
 };

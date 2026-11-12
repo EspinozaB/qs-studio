@@ -1,4 +1,5 @@
 #include "LibraryTab.h"
+#include "SearchAll.h"
 
 #include "../core/qs_samples.h"
 
@@ -1146,11 +1147,21 @@ void LibraryTab::showBankTools() {
     m.addItem(3, "Swap or copy programs in the User bank...", session.midi.isOpen());
     m.addSeparator();
     m.addItem(4, "Export the names in this list (CSV)...");
+    m.addItem(5, "Search everything saved (all libraries and backups)...");
     m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&toolsBtn), [this](int r) {
         if (r == 1) saveBankAsSyx();
         if (r == 2) sendBankToUser();
         if (r == 3) swapOrCopy();
         if (r == 4) exportNames();
+        if (r == 5) {
+            juce::DialogWindow::LaunchOptions o;
+            o.content.setOwned(new SearchAll(session));
+            o.dialogTitle = "Search everything saved";
+            o.dialogBackgroundColour = theme::bg;
+            o.useNativeTitleBar = true;
+            o.resizable = true;
+            o.launchAsync();
+        }
     });
 }
 
@@ -1243,36 +1254,66 @@ void LibraryTab::swapOrCopy() {
         if (r != 1) return;
         const bool swap = w->getComboBoxComponent("action")->getSelectedItemIndex() == 0;
         const int a = w->getComboBoxComponent("a")->getSelectedItemIndex(), b = w->getComboBoxComponent("b")->getSelectedItemIndex();
-        auto& lib = session.library;
-        if (a == b) return;
-        if (!lib.programs[0][size_t(a)] || (swap && !lib.programs[0][size_t(b)])) {
-            alert("Read the User bank first", "QS Studio needs the programs' data to move them. Click Read from the synth... and read the User bank.");
-            return;
-        }
-        const auto pa = lib.programs[0][size_t(a)], pb = lib.programs[0][size_t(b)];
-        const auto ea = lib.effects[0][size_t(a)], eb = lib.effects[0][size_t(b)];
-        std::vector<qs::Bytes> msgs{pa->userDump(b)};
-        if (ea) msgs.push_back(qs::Effects::fromData(*ea).userDump(b));
-        if (swap) {
-            msgs.push_back(pb->userDump(a));
-            if (eb) msgs.push_back(qs::Effects::fromData(*eb).userDump(a));
-        }
-        qslog::action(juce::String(swap ? "Swap" : "Copy") + " User " + juce::String(a) + (swap ? " <-> " : " -> ") + "User " + juce::String(b));
-        (new SendMessagesJob(session, msgs, swap ? "Swapping programs" : "Copying a program", [this, swap, a, b, pa, pb, ea, eb](bool ok) {
-            if (!ok) return;
-            auto& l = session.library;
-            l.programs[0][size_t(b)] = pa;
-            if (ea) l.effects[0][size_t(b)] = ea;
-            if (swap) {
-                l.programs[0][size_t(a)] = pb;
-                if (eb) l.effects[0][size_t(a)] = eb;
-            }
-            l.save();
-            refresh();
-            if (session.setStatus) session.setStatus(swap ? "Swapped User " + juce::String(a) + " and " + juce::String(b) + "."
-                                                          : "Copied User " + juce::String(a) + " to " + juce::String(b) + ".");
-        }))->launchThread();
+        moveUserProgram(a, b, swap);
     }), true);
+}
+
+void LibraryTab::moveUserProgram(int a, int b, bool swap) {
+    auto& lib = session.library;
+    if (a == b || a < 0 || b < 0) return;
+    if (!lib.programs[0][size_t(a)] || (swap && !lib.programs[0][size_t(b)])) {
+        alert("Read the User bank first", "QS Studio needs the programs' data to move them. Click Read from the synth... and read the User bank.");
+        return;
+    }
+    const auto pa = lib.programs[0][size_t(a)], pb = lib.programs[0][size_t(b)];
+    const auto ea = lib.effects[0][size_t(a)], eb = lib.effects[0][size_t(b)];
+    std::vector<qs::Bytes> msgs{pa->userDump(b)};
+    if (ea) msgs.push_back(qs::Effects::fromData(*ea).userDump(b));
+    if (swap) {
+        msgs.push_back(pb->userDump(a));
+        if (eb) msgs.push_back(qs::Effects::fromData(*eb).userDump(a));
+    }
+    qslog::action(juce::String(swap ? "Swap" : "Copy") + " User " + juce::String(a) + (swap ? " <-> " : " -> ") + "User " + juce::String(b));
+    (new SendMessagesJob(session, msgs, swap ? "Swapping programs" : "Copying a program", [this, swap, a, b, pa, pb, ea, eb](bool ok) {
+        if (!ok) return;
+        auto& l = session.library;
+        l.programs[0][size_t(b)] = pa;
+        if (ea) l.effects[0][size_t(b)] = ea;
+        if (swap) {
+            l.programs[0][size_t(a)] = pb;
+            if (eb) l.effects[0][size_t(a)] = eb;
+        }
+        l.save();
+        refresh();
+        if (session.setStatus) session.setStatus(swap ? "Swapped User " + juce::String(a) + " and " + juce::String(b) + "."
+                                                      : "Copied User " + juce::String(a) + " to " + juce::String(b) + ".");
+    }))->launchThread();
+}
+
+// Drag a User program onto another to swap them (programs move with their effects).
+juce::var LibraryTab::getDragSourceDescription(const juce::SparseSet<int>& rowsSelected) {
+    if (mixView || bank != 0 || rowsSelected.size() != 1 || !session.midi.isOpen()) return {};
+    const int row = rowsSelected[0];
+    if (row < 0 || row >= int(rows.size())) return {};
+    return "qsprog:" + juce::String(rows[size_t(row)]);
+}
+
+bool LibraryTab::isInterestedInDragSource(const SourceDetails& d) { return d.description.toString().startsWith("qsprog:"); }
+
+void LibraryTab::itemDropped(const SourceDetails& d) {
+    const int from = d.description.toString().fromFirstOccurrenceOf(":", false, false).getIntValue();
+    const auto pos = list.getLocalPoint(this, d.localPosition);
+    const int row = list.getRowContainingPosition(pos.x, pos.y);
+    if (row < 0 || row >= int(rows.size())) return;
+    const int to = rows[size_t(row)];
+    if (to == from) return;
+    juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::QuestionIcon, "Swap these programs?",
+                                       "Swap User " + juce::String(from).paddedLeft('0', 3) + " (" + session.library.nameOf(0, from) + ") and User " +
+                                           juce::String(to).paddedLeft('0', 3) + " (" + session.library.nameOf(0, to) + ") on the QS?",
+                                       "Swap", "Cancel", nullptr,
+                                       juce::ModalCallbackFunction::create([this, from, to](int r) {
+                                           if (r == 1) moveUserProgram(from, to, true);
+                                       }));
 }
 
 void LibraryTab::exportNames() {
