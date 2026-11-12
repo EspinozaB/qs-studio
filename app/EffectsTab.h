@@ -3,6 +3,9 @@
 #pragma once
 #include <JuceHeader.h>
 
+#include <array>
+#include <optional>
+
 #include "Session.h"
 #include "Theme.h"
 
@@ -15,6 +18,8 @@ public:
 
     // edit: 0 = the Program mode effect, 1 = the Mix mode effect. An empty patch means "get it from the QS".
     void openEffects(const qs::Effects& e, const juce::String& where, int edit, bool fetch);
+    // The program this effect belongs to, when known: shows which effect sends its sounds actually use.
+    void setProgram(const std::optional<qs::Program>& p);
 
 private:
     class Control;
@@ -51,7 +56,14 @@ private:
         int send = 0;       // 1-4, 0 for the patch-wide blocks
         std::vector<Control*> controls;
         juce::Rectangle<int> card;
+        int feedsReverb = 0;  // a send's way into another send's reverb (no reverb of its own): that reverb's number
+        juce::String title() const;
+        bool isOff(const qs::Effects& fx) const;  // its mix (or level into the reverb) is 0, so it adds nothing
     };
+    juce::String usedBuses;  // "1, 3" from the program's sounds, when known
+    std::array<bool, 4> busUsed{{true, true, true, true}};
+    bool busesKnown = false;
+    void refreshCards();
     class Content;
     juce::Viewport view;
     std::unique_ptr<Content> content;

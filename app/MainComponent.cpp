@@ -438,6 +438,8 @@ MainComponent::MainComponent() {
         // An all-zero patch means "not known here": ask the QS for its effect edit buffer.
         const bool fetch = std::all_of(e.bytes().begin(), e.bytes().end(), [](uint8_t b) { return b == 0; });
         fxEditor->openEffects(e, where, edit, fetch);
+        fxEditor->setProgram(session.effectsProgram);
+        session.effectsProgram.reset();
         showPageNamed("Effects Editor");
     };
     // Screenshots without a synth: QS_STUDIO_UI_SYX=<file> fills the mix and effects editors from a .syx.
@@ -449,6 +451,7 @@ MainComponent::MainComponent() {
         for (auto& m : qs::splitSysex(qs::Bytes(ptr, ptr + mb.getSize()))) {
             if (auto x = qs::Mix::fromDump(m); x && !gotMix && m[6] == 1) { mixEditor->openMix(*x, f.getFileName(), -1); gotMix = true; }
             if (auto e = qs::Effects::fromDump(m); e && !gotFx && m[6] == 0) { fxEditor->openEffects(*e, f.getFileName(), 0, false); gotFx = true; }
+            if (auto pr = qs::Program::fromDump(m); pr && m[6] == 0 && qs::opcodeOf(m) == qs::UserProgramDump) fxEditor->setProgram(pr);
         }
     }
     session.editMixChannelProgram = [this](int ch, const juce::String& mixName) {

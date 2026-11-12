@@ -6,7 +6,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout layout() {
     juce::AudioProcessorValueTreeState::ParameterLayout l;
     l.add(std::make_unique<P>(juce::ParameterID{"attack", 1}, "Attack", juce::NormalisableRange<float>(0.0f, 2.0f, 0.001f, 0.4f), 0.002f));
     l.add(std::make_unique<P>(juce::ParameterID{"release", 1}, "Release", juce::NormalisableRange<float>(0.0f, 5.0f, 0.001f, 0.4f), 0.35f));
-    l.add(std::make_unique<P>(juce::ParameterID{"volume", 1}, "Volume", juce::NormalisableRange<float>(0.0f, 1.0f), 0.8f));
+    l.add(std::make_unique<P>(juce::ParameterID{"volume", 1}, "Volume", juce::NormalisableRange<float>(0.0f, 1.0f), 0.5f));
     return l;
 }
 

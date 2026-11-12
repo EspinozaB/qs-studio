@@ -119,37 +119,96 @@ private:
 // Draws the cards and the send titles behind the controls.
 class EffectsTab::Content : public juce::Component {
 public:
-    std::vector<std::pair<juce::Rectangle<int>, juce::String>> cards, columns;
+    struct Card {
+        juce::Rectangle<int> r;
+        juce::String title, badge;
+        bool off;
+    };
+    std::vector<Card> cards;
+    std::vector<std::tuple<juce::Rectangle<int>, juce::String, bool>> columns;  // area, title, used by the program
+    juce::String intro;
+    juce::Rectangle<int> introArea;
     void paint(juce::Graphics& g) override {
-        for (auto& [r, title] : columns) {
-            g.setColour(theme::accent);
+        g.setColour(theme::panelHi);
+        g.fillRoundedRectangle(introArea.toFloat(), 8.0f);
+        g.setColour(theme::text);
+        g.setFont(theme::uiFont(13.5f));
+        g.drawFittedText(intro, introArea.reduced(12, 6), juce::Justification::centredLeft, 4, 1.0f);
+        for (auto& [r, title, used] : columns) {
+            g.setColour(used ? theme::accent : theme::dim);
             g.setFont(theme::uiFont(13.0f, true));
             g.drawText(title, r, juce::Justification::centredLeft);
         }
-        for (auto& [r, title] : cards) {
-            g.setColour(theme::panel);
-            g.fillRoundedRectangle(r.toFloat(), 8.0f);
+        for (auto& c : cards) {
+            g.setColour(c.off ? theme::bg : theme::panel);
+            g.fillRoundedRectangle(c.r.toFloat(), 8.0f);
             g.setColour(theme::line);
-            g.drawRoundedRectangle(r.toFloat().reduced(0.5f), 8.0f, 1.0f);
-            g.setColour(theme::text);
+            g.drawRoundedRectangle(c.r.toFloat().reduced(0.5f), 8.0f, 1.0f);
+            g.setColour(c.off ? theme::dim : theme::text);
             g.setFont(theme::uiFont(14.0f, true));
-            g.drawText(title.toUpperCase(), r.withHeight(26).reduced(10, 0), juce::Justification::centredLeft);
+            g.drawText(c.title.toUpperCase(), c.r.withHeight(26).reduced(10, 0), juce::Justification::centredLeft);
+            if (c.badge.isNotEmpty()) {
+                g.setColour(theme::dim);
+                g.setFont(theme::uiFont(12.0f));
+                g.drawText(c.badge, c.r.withHeight(26).reduced(10, 0), juce::Justification::centredRight);
+            }
         }
     }
 };
+
+namespace {
+// What each configuration is, in a sentence or two (from the QS6 manual's configuration diagrams).
+juce::String configStory(int c) {
+    switch (c) {
+        case 0: return "1 Reverb: sends 1-3 each go through a Pitch effect (chorus, flange, detune or resonator) and a Delay; send 4 has a "
+                       "Delay. All four can feed one shared reverb (Reverb 1).";
+        case 1: return "2 Reverbs: send 1 goes through a Delay, a chorus and Reverb 1, and send 2 can feed Reverb 1 too. Send 3 goes "
+                       "through a chorus and Reverb 3, and send 4 can feed Reverb 3.";
+        case 2: return "Lezlie and Reverb: send 1 has a rotary speaker (Lezlie) and a Delay; sends 2 and 3 have Pitch and Delay; send 4 "
+                       "a Delay. All of them can feed one shared reverb (Reverb 1).";
+        case 3: return "Reverb and EQ: sends 1 and 2 each have Pitch and Delay and share one reverb; a low and high EQ shapes the main "
+                       "outputs. Sends 3 and 4 have no effects in this configuration.";
+        case 4: return "Overdrive and Lezlie: one guitar or organ chain on send 1 (overdrive, pitch, delay, reverb and a rotary speaker), "
+                       "plus EQ. Sends 2-4 have no effects in this configuration.";
+        default: return {};
+    }
+}
+}  // namespace
+
+juce::String EffectsTab::Block::title() const {
+    if (feedsReverb > 0) return "Into Reverb " + juce::String(feedsReverb);
+    return send > 0 ? kind + " " + juce::String(send) : kind;
+}
+
+bool EffectsTab::Block::isOff(const qs::Effects& e) const {
+    for (auto* c : controls) {
+        const auto n = juce::String(c->p.name);
+        if (feedsReverb > 0 ? n.endsWith("input level") : n.endsWith(" mix") || n == "Pitch mix") return e.raw(c->p) == 0;
+    }
+    return false;
+}
 
 EffectsTab::EffectsTab(Session& s) : session(s) {
     content = std::make_unique<Content>();
     addAndMakeVisible(lcd);
     for (int c = 0; c < qs::kEffectConfigs; ++c) configBox.addItem(juce::String(c + 1) + ": " + qs::effectConfigName(c), c + 1);
     configBox.setTooltip("Which effects the patch has and how the four sends are wired (QS manual, Chapter 7). Pick this first: "
-                         "the other parameters depend on it.");
+                         "on the QS, changing it resets every effect setting to that configuration's defaults.");
     configBox.onChange = [this] {
         const int c = configBox.getSelectedId() - 1;
         if (c < 0 || c == fx.config()) return;
         fx.setConfig(c);
-        if (liveToggle.getToggleState() && session.midi.isOpen()) session.midi.send(qs::effectParamEdit(qs::effectConfigParam(), c));
         qslog::action("Effects editor: configuration " + juce::String(c + 1));
+        if (liveToggle.getToggleState() && session.midi.isOpen()) {
+            // The QS resets every effect setting to that configuration's defaults: read them back.
+            session.midi.send(qs::effectParamEdit(qs::effectConfigParam(), c));
+            awaitingDump = true;
+            requestsSent = 0;
+            nextRequestAt = juce::Time::getMillisecondCounter() + 400;
+        } else if (session.setStatus) {
+            session.setStatus("Configuration changed here only. On the QS a new configuration starts from its defaults; Get from QS after "
+                              "changing it there.");
+        }
         rebuild();
     };
     targetBox.addItem("The program (Program mode)", 1);
@@ -160,8 +219,8 @@ EffectsTab::EffectsTab(Session& s) : session(s) {
     for (auto* l : {&configLabel, &targetLabel}) l->setColour(juce::Label::textColourId, theme::dim);
     liveToggle.setToggleState(settings().getBoolValue("liveEdit", true), juce::dontSendNotification);
     liveToggle.onClick = [this] { settings().setValue("liveEdit", liveToggle.getToggleState()); };
-    note.setText("Each column is one effect send: what a program sends to bus 1-4 goes through that column's effects, top to bottom. "
-                 "Pick the configuration first; a block's type (chorus, flange, delay type...) decides which settings it shows.",
+    note.setText("Columns are the four effect sends, top to bottom in signal order. An effect's type (chorus, flange, delay type...) "
+                 "decides which settings it shows. Mix sets how much of an effect you hear: 0 is off.",
                  juce::dontSendNotification);
     note.setColour(juce::Label::textColourId, theme::dim);
     note.setFont(theme::uiFont(12.0f));
@@ -230,9 +289,52 @@ void EffectsTab::rebuild() {
         content->addAndMakeVisible(ctl);
         it->controls.push_back(ctl);
     }
+    // A send's reverb card with no reverb type of its own is its way into another send's reverb.
+    for (auto& b : blocks) {
+        if (b.kind != "Reverb") continue;
+        const bool hasType = std::any_of(b.controls.begin(), b.controls.end(), [](Control* x) { return juce::String(x->p.name) == "Reverb type"; });
+        if (hasType) continue;
+        int target = 1;
+        for (auto& o : blocks)
+            if (o.kind == "Reverb" && o.send < b.send &&
+                std::any_of(o.controls.begin(), o.controls.end(), [](Control* x) { return juce::String(x->p.name) == "Reverb type"; }))
+                target = o.send;
+        b.feedsReverb = target;
+    }
     loadValues();
     layoutContent();
     updateLcd();
+}
+
+void EffectsTab::setProgram(const std::optional<qs::Program>& p) {
+    busesKnown = p.has_value();
+    busUsed = {{!busesKnown, !busesKnown, !busesKnown, !busesKnown}};
+    if (p) {
+        static const auto& busP = qs::keyboardParam(qs::findKeyboardParam("Effect bus"));
+        static const auto& levelP = qs::keyboardParam(qs::findKeyboardParam("Effect level"));
+        for (int snd = 0; snd < qs::kSoundCount; ++snd) {
+            if (!p->isEnabled(snd)) continue;
+            if (p->isDrum(snd)) {
+                for (int i = 0; i < qs::drumParamCount(); ++i) {
+                    const auto& d = qs::drumParam(i);
+                    if (juce::String(d.name) != "Effect bus") continue;
+                    for (int drum = 0; drum < qs::kDrumsPerSound; ++drum) busUsed[size_t(juce::jlimit(0, 3, p->raw(snd, d, drum)))] = true;
+                }
+            } else if (p->raw(snd, levelP) > 0) {
+                busUsed[size_t(juce::jlimit(0, 3, p->raw(snd, busP)))] = true;
+            }
+        }
+    }
+    layoutContent();
+}
+
+void EffectsTab::refreshCards() {
+    for (size_t i = 0; i < blocks.size() && i < content->cards.size(); ++i) {
+        content->cards[i].off = blocks[i].isOff(fx);
+        for (auto* c : blocks[i].controls) c->setAlpha(content->cards[i].off ? 0.55f : 1.0f);
+        content->cards[i].badge = content->cards[i].off ? (blocks[i].feedsReverb > 0 ? "off (level 0)" : "off (mix 0)") : juce::String();
+    }
+    content->repaint();
 }
 
 void EffectsTab::loadValues() {
@@ -248,6 +350,7 @@ void EffectsTab::updateLcd() {
 void EffectsTab::changed(const qs::EffectParam& p, int raw, bool isType) {
     fx.setRaw(p, raw);
     if (liveToggle.getToggleState() && session.midi.isOpen()) session.midi.send(qs::effectParamEdit(p, displayed(p, raw)));
+    refreshCards();
     if (isType) rebuildPending = true;  // other parameters appear or go; rebuild outside the control's own callback
 }
 
@@ -395,9 +498,21 @@ void EffectsTab::layoutContent() {
         b.card = {x, y, cw, titleH + rows * (cellH + 6) + 6};
         return b.card.getBottom();
     };
-    int bottom = 0;
+    content->intro = configStory(fx.config()) +
+                     "\nEach program sound sends to one of the four effect sends (its Effect bus). Every effect below is always there; "
+                     "one turned down to mix 0 adds nothing, so it shows as off." +
+                     (busesKnown ? juce::String("\nThis program uses send ") + [&] {
+                         juce::StringArray used;
+                         for (int i = 0; i < 4; ++i)
+                             if (busUsed[size_t(i)]) used.add(juce::String(i + 1));
+                         return used.isEmpty() ? juce::String("none") : used.joinIntoString(", ");
+                     }() + ": changes on the other sends won't be heard with it."
+                                 : juce::String());
+    content->introArea = {0, 0, w, busesKnown ? 78 : 62};
+    const int top = content->introArea.getBottom() + 10;
+    int bottom = top;
     for (int ci = 0; ci < int(sends.size()); ++ci) {
-        int y = 30;  // room for the column title
+        int y = top + 30;  // room for the column title
         const int x = ci * (colW + gap);
         for (auto& b : blocks)
             if (b.send == sends[size_t(ci)]) y = placeCard(b, x, y, colW) + gap;
@@ -409,19 +524,23 @@ void EffectsTab::layoutContent() {
         if (b.send == 0) shared.push_back(&b);
     if (!shared.empty()) {
         const int sw = (w - gap * (int(shared.size()) - 1)) / int(shared.size());
+        bottom = juce::jmax(bottom, top);
         int y2 = bottom;
         for (size_t i = 0; i < shared.size(); ++i) y2 = juce::jmax(y2, placeCard(*shared[i], int(i) * (sw + gap), bottom, sw) + gap);
         bottom = y2;
     }
     content->columns.clear();
     for (int ci = 0; ci < int(sends.size()); ++ci) {
+        const int sn = sends[size_t(ci)];
         juce::String chain;
         for (auto& b : blocks)
-            if (b.send == sends[size_t(ci)]) chain << (chain.isEmpty() ? "" : "  >  ") << b.kind;
-        content->columns.push_back({{ci * (colW + gap), 0, colW, 24}, "SEND " + juce::String(sends[size_t(ci)]) + ":  " + chain});
+            if (b.send == sn) chain << (chain.isEmpty() ? "" : "  >  ") << (b.feedsReverb > 0 ? "Reverb " + juce::String(b.feedsReverb) : b.kind);
+        const bool used = busUsed[size_t(juce::jlimit(1, 4, sn) - 1)];
+        content->columns.push_back({{ci * (colW + gap), top, colW, 24},
+                                    "SEND " + juce::String(sn) + ":  " + chain + (used ? juce::String() : "   (not used by this program)"), used});
     }
     content->cards.clear();
-    for (auto& b : blocks) content->cards.push_back({b.card, b.send > 0 ? b.kind + " " + juce::String(b.send) : b.kind});
+    for (auto& b : blocks) content->cards.push_back({b.card, b.title(), {}, false});
     content->setSize(w, juce::jmax(bottom, 10));
-    content->repaint();
+    refreshCards();
 }

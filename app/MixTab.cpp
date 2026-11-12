@@ -273,6 +273,7 @@ void MixTab::updateLcd() {
 void MixTab::changed(int ch, const qs::MixParam& p, int raw) {
     mix.setChannel(ch, p, raw);
     if (rows[ch] != nullptr) rows[ch]->dimIfOff();
+    if (liveToggle.getToggleState() && session.playingMix) session.setActiveMix(mix);  // keyboard follows Enable/Keyboard switches
     updateLcd();
     if (liveToggle.getToggleState() && session.midi.isOpen()) session.midi.send(qs::mixParamEdit(p, ch, raw + p.offset));
 }
@@ -327,6 +328,8 @@ void MixTab::sendToQs() {
     if (!session.midi.isOpen()) { alert("Not connected", "Connect to the QS on the Connection page first."); return; }
     session.midi.send(qs::modeSelect(1));
     session.midi.send(mix.dump(100));
+    session.playingMix = true;
+    session.setActiveMix(mix);
     nameDirty = false;
     qslog::action("Mix editor: sent \"" + juce::String(mix.name()).trimEnd() + "\" to the mix edit buffer");
     if (session.setStatus) session.setStatus("Sent mix " + juce::String(mix.name()).trimEnd() + " to the QS (not stored).");

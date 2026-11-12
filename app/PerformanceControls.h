@@ -12,7 +12,7 @@ class PerformanceControls : public juce::Component, private juce::Value::Listene
 public:
     explicit PerformanceControls(Session& s) : session(s) {
         pitch.setSpringBack(true);
-        pitch.onChange = [this](int v) { session.midi.sendMidi(juce::MidiMessage::pitchWheel(session.channel, v + 8192)); };
+        pitch.onChange = [this](int v) { session.sendPerformance(juce::MidiMessage::pitchWheel(session.channel, v + 8192)); };
         pitch.setTooltip("Pitch wheel: drag up or down; it springs back when you let go");
         mod.onChange = [this](int v) { cc(1, v); };
         mod.setTooltip("Mod wheel (CC1): drag, or use the mouse wheel");
@@ -124,7 +124,7 @@ private:
         if (!fromController) cc(7, vol);  // the controller's own CC7 already went to the QS
     }
     bool fromController = false;
-    void cc(int number, int v) { session.midi.sendMidi(juce::MidiMessage::controllerEvent(session.channel, juce::jlimit(0, 127, number), v)); }
+    void cc(int number, int v) { session.sendPerformance(juce::MidiMessage::controllerEvent(session.channel, juce::jlimit(0, 127, number), v)); }
 
     Session& session;
     hw::Wheel pitch{-8192, 8191, 0, true}, mod{0, 127, 0, false};

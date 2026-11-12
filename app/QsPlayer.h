@@ -29,6 +29,11 @@ inline Image loadFile(const juce::File& f, juce::String& error) {
             error = f.getFileName() + " has programs but no samples (a program card).";
             return {};
         }
+        if (img->samplesLookWrong) {
+            error = f.getFileName() + "'s voice list doesn't point at audio in this file (" + juce::String(img->sampleCheck) +
+                    "). QS Studio won't play it, to spare your ears. Please send the file so the format can be worked out.";
+            return {};
+        }
         return img;
     }
     error = juce::String(err);
@@ -61,7 +66,7 @@ public:
 };
 
 struct Settings {
-    std::atomic<float> attack{0.002f}, release{0.35f}, gain{0.8f};
+    std::atomic<float> attack{0.002f}, release{0.35f}, gain{0.5f};
 };
 
 class Voice : public juce::SynthesiserVoice {
@@ -160,6 +165,11 @@ public:
     void prepare(double sampleRate) { synth.setCurrentPlaybackSampleRate(sampleRate); }
     void render(juce::AudioBuffer<float>& buffer, const juce::MidiBuffer& midi, int startSample, int n) {
         synth.renderNextBlock(buffer, midi, startSample, n);
+        // Soft limit: many full-scale samples at once (or a bad file) can't jump past about -1 dBFS.
+        for (int ch = 0; ch < buffer.getNumChannels(); ++ch) {
+            auto* d = buffer.getWritePointer(ch, startSample);
+            for (int i = 0; i < n; ++i) d[i] = 0.9f * std::tanh(d[i] / 0.9f);
+        }
     }
     void allNotesOff() { synth.allNotesOff(0, true); }
 

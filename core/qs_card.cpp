@@ -1,6 +1,7 @@
 #include "qs_card.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <map>
@@ -29,7 +30,38 @@ bool looksLikeCard(const Bytes& d) {
 int16_t CardImage::sampleAt(uint32_t w) const {
     const size_t b = size_t(w) * 2;
     if (b + 1 >= data.size()) return 0;
-    return int16_t(uint16_t(data[b] << 8 | data[b + 1]));
+    return samplesSwapped ? int16_t(uint16_t(data[b + 1] << 8 | data[b])) : int16_t(uint16_t(data[b] << 8 | data[b + 1]));
+}
+
+void checkSampleByteOrder(CardImage& c) {
+    c.samplesSwapped = false;
+    double be = 0, le = 0;
+    int zones = 0;
+    for (const auto& v : c.voices)
+        for (const auto& z : v.zones) {
+            if (zones >= 200 || z.end <= z.start + 16 || !c.zoneAvailable(z)) continue;
+            const size_t from = size_t(c.zoneWordBase(z) + z.start) * 2, n = std::min<size_t>(z.end - z.start, 2000);
+            if (from + n * 2 + 2 > c.data.size()) continue;
+            for (size_t i = 1; i < n; ++i) {
+                const uint8_t* p = &c.data[from + i * 2];
+                const uint8_t* q = p - 2;
+                be += std::abs(int(int16_t(uint16_t(p[0] << 8 | p[1]))) - int(int16_t(uint16_t(q[0] << 8 | q[1]))));
+                le += std::abs(int(int16_t(uint16_t(p[1] << 8 | p[0]))) - int(int16_t(uint16_t(q[1] << 8 | q[0]))));
+            }
+            ++zones;
+        }
+    if (zones == 0) {
+        c.sampleCheck = "no samples to check";
+        return;
+    }
+    c.samplesSwapped = le * 1.5 < be;
+    // Neither order smooth: the addresses don't point at audio (an unknown card layout), so don't play it at full blast.
+    c.samplesLookWrong = std::min(be, le) / zones / 1999.0 > 8000.0;
+    char buf[200];
+    std::snprintf(buf, sizeof buf, "sample byte order: %s (average step %.0f big-endian, %.0f little-endian, %d zones)",
+                  c.samplesSwapped ? "little-endian, swapped" : "big-endian", be / zones / 1999.0, le / zones / 1999.0, zones);
+    if (c.samplesLookWrong) c.sampleCheck += "; neither order looks like audio";
+    c.sampleCheck = buf;
 }
 
 Bytes CardImage::program(int i) const {
@@ -110,6 +142,7 @@ bool loadInternalRom(const Bytes& raw, CardImage& c, std::string& error) {
     c.isRom = true;
     parseVoices(c, 0x14);
     if (c.voices.empty()) { error = "The ROM header is there but no voices were found"; return false; }
+    checkSampleByteOrder(c);
     return true;
 }
 
@@ -139,6 +172,7 @@ bool loadCardImage(const Bytes& raw, CardImage& c, std::string& error) {
             if (g.find_first_not_of(' ') != std::string::npos && printable(&d[i], 6)) c.groups.push_back(g);
         }
         parseVoices(c);
+        checkSampleByteOrder(c);
     } else {
         c.cardName = "(program-only card)";
     }

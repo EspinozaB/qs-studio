@@ -30,7 +30,7 @@ PlayerTab::PlayerTab(Session& s) : session(s) {
     };
     setup(attack, 0.0, 2.0, settings().getDoubleValue("playerAttack", 0.002), " s");
     setup(release, 0.0, 5.0, settings().getDoubleValue("playerRelease", 0.35), " s");
-    setup(volume, 0.0, 1.0, settings().getDoubleValue("playerVolume", 0.8), "");
+    setup(volume, 0.0, 1.0, settings().getDoubleValue("playerVolume", 0.5), "");
     attack.setSkewFactorFromMidPoint(0.2);
     release.setSkewFactorFromMidPoint(0.8);
     auto apply = [this] {
@@ -130,13 +130,15 @@ void PlayerTab::load(const juce::File& f) {
     juce::String err;
     auto img = qsplayer::loadFile(f, err);
     if (img == nullptr) {
+        qslog::action("Sound Player: can't play " + f.getFullPathName() + ": " + err);
         alert("Can't play this file", err);
         return;
     }
     image = img;
     imageFile = f;
     settings().setValue("playerFile", f.getFullPathName());
-    qslog::action("Sound Player: opened " + f.getFileName() + " (" + juce::String(int(image->voices.size())) + " voices)");
+    qslog::action("Sound Player: opened " + f.getFileName() + " (" + juce::String(int(image->voices.size())) + " voices, " +
+                  juce::String(image->sampleCheck) + ")");
     engine.select(nullptr, -1);
     filter();
     if (!rows.empty()) list.selectRow(0);

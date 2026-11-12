@@ -1,5 +1,6 @@
 // Core tests: run with paths to card images and a factory .syx.
 #include <cassert>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
@@ -20,7 +21,51 @@ static qs::Bytes readFile(const char* p) {
 static int fails = 0;
 #define CHECK(c) do { if (!(c)) { std::cerr << "FAIL " << __LINE__ << ": " #c "\n"; ++fails; } } while (0)
 
+// A tiny synthetic sample ROM: header, one voice with one zone of a sine wave. Checks the voice directory parser,
+// the loop/region mapping and the byte-order check (both orders).
+static void syntheticRomTest() {
+    for (int swapped = 0; swapped < 2; ++swapped) {
+        qs::Bytes d(0x20000, 0);
+        const uint8_t head[] = {0x00, 0x80, 0x00, 0x00, 0x04};
+        std::copy(head, head + 5, d.begin());
+        const char* name = "FQS78ROM v20220";
+        std::copy(name, name + 15, d.begin() + 5);
+        size_t o = 0x14;
+        d[o++] = 0;  // group
+        d[o++] = 1;  // index
+        const char* vn = "Test Sine ";
+        std::copy(vn, vn + 10, d.begin() + long(o));
+        o += 10;
+        d[o++] = 0;     // no splits
+        d[o++] = 0;     // one layer
+        d[o++] = 0x80;  // velocity splits unused
+        d[o++] = 0x80;
+        d[o++] = 127;   // top key
+        if (o % 2) ++o;
+        const uint32_t start = 0x8000, end = start + 4799;  // 100 cycles of 48 samples
+        const uint8_t zone[12] = {69, 0, 0, 0, 0, 0, uint8_t(end >> 8), uint8_t(end), uint8_t((end >> 16) & 0x3F),
+                                  uint8_t((start >> 16) & 0x3F), uint8_t(start >> 8), uint8_t(start)};
+        std::copy(zone, zone + 12, d.begin() + long(o));
+        for (uint32_t i = 0; i <= end - start; ++i) {
+            const auto v = uint16_t(int16_t(std::lround(12000.0 * std::sin(2.0 * 3.14159265358979 * i / 48.0))));
+            const size_t b = size_t(start + i) * 2;
+            d[b] = uint8_t(swapped ? v : v >> 8);
+            d[b + 1] = uint8_t(swapped ? v >> 8 : v);
+        }
+        qs::CardImage c;
+        std::string err;
+        CHECK(qs::loadInternalRom(d, c, err));
+        CHECK(c.voices.size() == 1 && c.voices[0].name == "Test Sine ");
+        CHECK(c.samplesSwapped == (swapped != 0) && !c.samplesLookWrong);
+        const auto regions = qs::voiceRegions(c.voices[0]);
+        CHECK(regions.size() == 1 && regions[0].lo == 0 && regions[0].hi == 127 && regions[0].zone->root == 69);
+        CHECK(c.sampleAt(start + 12) > 11000);  // a quarter cycle in: near the peak, whichever order it was stored in
+        std::printf("    synthetic ROM (%s): %s\n", swapped ? "little-endian" : "big-endian", c.sampleCheck.c_str());
+    }
+}
+
 int main(int argc, char** argv) {
+    syntheticRomTest();
     // pack/unpack round trip and sizes from the spec
     CHECK(qs::packedSize(350) == 400 && qs::packedSize(138) == 158 && qs::packedSize(65) == 75 &&
           qs::packedSize(20) == 23 && qs::packedSize(1024) == 1171);

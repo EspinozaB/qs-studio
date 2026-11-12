@@ -850,6 +850,7 @@ void LibraryTab::setMixView(bool mix, bool switchQs) {
         if (session.canSelectMixes()) session.selectMix(session.currentMixBank, session.currentMix);
         else {
             session.midi.send(qs::modeSelect(1));  // Mix mode, on whichever mix the QS was on
+            session.learnActiveMix();
             session.mixModeSent = true;
             session.programModeSent = false;
         }
@@ -1123,13 +1124,17 @@ void LibraryTab::openEffectOf(int prog) {
     if (!session.openEffectsEditor) return;
     const auto where = bankTitle(bank) + " " + juce::String(prog).paddedLeft('0', 3) + " effect";
     const auto& cached = session.library.effects[size_t(bank)][size_t(prog)];
+    session.effectsProgram = session.library.programs[size_t(bank)][size_t(prog)];
     if (session.midi.isOpen()) {
         session.selectProgram(bank, prog);
         session.openEffectsEditor(qs::Effects(), where, 0);  // fetch the effect the program brought in
         return;
     }
     if (cached) session.openEffectsEditor(qs::Effects::fromData(*cached), where + " (offline copy)", 0);
-    else alert("Not available", "Connect to the QS, or read this bank first, to open this effect.");
+    else {
+        session.effectsProgram.reset();
+        alert("Not available", "Connect to the QS, or read this bank first, to open this effect.");
+    }
 }
 
 void LibraryTab::showBankTools() {

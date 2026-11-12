@@ -9,6 +9,15 @@ Back up both synths before anything that writes to them.
 - [ ] Connection: pick MIDI in/out, Connect. The pill says "Connected to your QS6 (OS ...)". Same for the QSR.
 - [ ] Switching synths: the panel look changes, and `QSStudio.QS6.library` / `QSStudio.QSR.library` both appear in `QS Studio Data`.
 
+## 0.6.1: fixes to check
+- [ ] **Sound Player with your QCard .bin:** opens at a sane level. The log line "Sound Player: opened ..." says which byte order
+      it found. If it refuses the file ("doesn't point at audio"), send the file and the log.
+- [ ] **Mix + QS Studio keyboard:** pick a layered or split mix (two or more channels with Keyboard on); the on-screen keys and
+      your controller now play every channel the QS's own keys would, not just channel 1.
+- [ ] **Effects Editor:** the box at the top explains the configuration and says which sends the program uses; effects with mix 0
+      show as off; a send without its own reverb shows "Into Reverb 1". Change the configuration with Live edit on: QS Studio
+      reads the QS's new defaults back.
+
 ## 0.6.0: what's new to test
 - [ ] **Mix switching:** click through 10-20 mixes, fast and slow. QS Studio now re-sends Mix mode every time, spaces the steps
       out, checks the QS's mix name afterwards and retries once if it didn't switch. If one still fails, the status bar says so:

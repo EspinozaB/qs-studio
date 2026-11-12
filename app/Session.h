@@ -298,6 +298,7 @@ struct Session : private juce::MidiKeyboardState::Listener, private juce::MidiIn
     std::function<void(const qs::Mix&, const juce::String& where, int userNumber)> openMixEditor;   // userNumber -1 if not a User mix
     std::function<void(const qs::Effects&, const juce::String& where, int edit)> openEffectsEditor; // edit: 0 Program, 1 Mix
     std::function<void(int channel, const juce::String& mixName)> editMixChannelProgram;
+    std::optional<qs::Program> effectsProgram;  // set before openEffectsEditor when the effect's program is known
     std::function<void(const juce::String&)> setStatus;
     std::function<void(int bank, int program)> currentProgramChanged;
     std::function<void()> channelChanged;
@@ -356,6 +357,7 @@ struct Session : private juce::MidiKeyboardState::Listener, private juce::MidiIn
             if (setStatus) setStatus("Program Select on the QS was set to one channel, which stops program changes. QS Studio set it back to On.");
         }
         // Program mode every time: an edit page may be showing, or someone pressed MIX on the QS (QS Studio can't see that).
+        playingMix = false;
         midi.send(qs::modeSelect(0));
         programModeSent = true;
         mixModeSent = false;
@@ -381,6 +383,9 @@ struct Session : private juce::MidiKeyboardState::Listener, private juce::MidiIn
     void selectMix(int bank, int mix, bool slow = false) {
         currentMixBank = bank;
         currentMix = mix;
+        playingMix = true;
+        if (auto& cached = library.mixes[size_t(bank)][size_t(mix)]) setActiveMix(qs::Mix::fromDump(cached->dump));
+        else setActiveMix(std::nullopt);
         // Mix mode every time: someone may have pressed PROGRAM on the QS since, and QS Studio can't see that.
         midi.send(qs::modeSelect(1));
         mixModeSent = true;
@@ -425,7 +430,23 @@ struct Session : private juce::MidiKeyboardState::Listener, private juce::MidiIn
     }
 
     // Called with every SysEx from the QS (message thread). Returns true if it was the answer to a check.
+    // Mix mode was entered without QS Studio knowing which mix (the panel's MIX key): ask the QS for its mix edit buffer.
+    void learnActiveMix() {
+        playingMix = true;
+        setActiveMix(std::nullopt);
+        if (!midi.isOpen()) return;
+        wantMixData = true;
+        juce::Timer::callAfterDelay(300, [this, alive = aliveFlag] {
+            if (*alive && midi.jobsRunning == 0) midi.send(qs::mixRequest(100));
+        });
+    }
+
     bool checkReply(const qs::Bytes& msg) {
+        if (wantMixData && qs::opcodeOf(msg) == qs::NewMixDump && msg.size() > 6 && msg[6] == 100 && checkSentAt == 0) {
+            wantMixData = false;
+            setActiveMix(qs::Mix::fromDump(msg));
+            return true;
+        }
         if (checkSentAt == 0 || juce::Time::getMillisecondCounter() - checkSentAt > 2500) return false;
         juce::String got;
         const int op = qs::opcodeOf(msg);
@@ -435,6 +456,7 @@ struct Session : private juce::MidiKeyboardState::Listener, private juce::MidiIn
             auto mi = qs::parseMixDump(msg);
             if (!mi || mi->number != 100) return false;
             got = juce::String(mi->name).trimEnd();
+            setActiveMix(qs::Mix::fromDump(msg));  // what the QS is really playing: which channels the keyboard should play
         } else {
             return false;
         }
@@ -465,9 +487,56 @@ struct Session : private juce::MidiKeyboardState::Listener, private juce::MidiIn
 
     void allNotesOff() {
         keys.allNotesOff(0);
-        midi.sendMidi(juce::MidiMessage::allNotesOff(channel));
-        midi.sendMidi(juce::MidiMessage::allSoundOff(channel));
+        for (int ch = 1; ch <= 16; ++ch) {  // a mix plays on several channels
+            midi.sendMidi(juce::MidiMessage::allNotesOff(ch));
+            midi.sendMidi(juce::MidiMessage::allSoundOff(ch));
+        }
+        for (auto& m : noteChannels) m = 0;
     }
+
+    // ---- Playing a mix from QS Studio's keyboard, wheels and sliders, and the controller.
+    // In Mix mode the QS's own keys play every mix channel whose Keyboard switch is on, each on its own MIDI channel.
+    // QS Studio does the same, so a layered or split mix sounds whole instead of just channel 1.
+    std::optional<qs::Mix> activeMix;  // the mix the QS is playing, when known (library copy, or read back by the check)
+    std::atomic<uint16_t> mixKeyboardChannels{0};  // from activeMix: channels with Enable and Keyboard on (0 = not known)
+    std::atomic<bool> playingMix{false};
+    bool wantMixData = false;
+
+    void setActiveMix(std::optional<qs::Mix> m) {
+        activeMix = std::move(m);
+        uint16_t mask = 0;
+        if (activeMix) {
+            static const auto& enableP = qs::mixChannelParam(qs::findMixChannelParam("Enable"));
+            static const auto& kbdP = qs::mixChannelParam(qs::findMixChannelParam("Keyboard"));
+            for (int ch = 0; ch < qs::kMixChannels; ++ch)
+                if (activeMix->channel(ch, enableP) && activeMix->channel(ch, kbdP)) mask = uint16_t(mask | (1u << ch));
+        }
+        mixKeyboardChannels = mask;
+    }
+
+    uint16_t playChannels() const {
+        const uint16_t mix = mixKeyboardChannels.load();
+        if (playingMix && mix != 0) return mix;
+        return uint16_t(1u << (juce::jlimit(1, 16, channel) - 1));
+    }
+
+    // Any thread (the controller comes in on the MIDI thread).
+    void sendPerformance(const juce::MidiMessage& m) {
+        uint16_t mask = playChannels();
+        if (m.isNoteOn()) noteChannels[size_t(m.getNoteNumber())] = mask;
+        else if (m.isNoteOff()) {
+            // Off on the channels the note started on, even if the mix changed while it was held.
+            if (noteChannels[size_t(m.getNoteNumber())] != 0) mask = noteChannels[size_t(m.getNoteNumber())];
+            noteChannels[size_t(m.getNoteNumber())] = 0;
+        }
+        for (int ch = 0; ch < 16; ++ch)
+            if (mask & (1u << ch)) {
+                auto copy = m;
+                copy.setChannel(ch + 1);
+                midi.sendMidi(copy);
+            }
+    }
+    std::array<std::atomic<uint16_t>, 128> noteChannels{};
 
 private:
     static bool& echoing() {
@@ -475,10 +544,10 @@ private:
         return e;
     }
     void handleNoteOn(juce::MidiKeyboardState*, int, int note, float vel) override {
-        if (!echoing() && notesToQs) midi.sendMidi(juce::MidiMessage::noteOn(channel, note, juce::jlimit(0.01f, 1.0f, vel)));
+        if (!echoing() && notesToQs) sendPerformance(juce::MidiMessage::noteOn(channel, note, juce::jlimit(0.01f, 1.0f, vel)));
     }
     void handleNoteOff(juce::MidiKeyboardState*, int, int note, float) override {
-        if (!echoing() && notesToQs) midi.sendMidi(juce::MidiMessage::noteOff(channel, note));
+        if (!echoing() && notesToQs) sendPerformance(juce::MidiMessage::noteOff(channel, note));
     }
 
     // From the MIDI controller (MIDI input thread).
@@ -486,7 +555,11 @@ private:
         if (in.isSysEx() || in.isActiveSense() || in.isMidiClock() || in.getChannel() == 0) return;
         auto m = in;
         m.setChannel(channel);
-        if (notesToQs || !(m.isNoteOnOrOff() || m.isPitchWheel() || m.isController())) midi.sendMidi(m);
+        if (m.isNoteOnOrOff() || m.isPitchWheel() || m.isController() || m.isAftertouch() || m.isChannelPressure()) {
+            if (notesToQs) sendPerformance(m);
+        } else {
+            midi.sendMidi(m);
+        }
         if (auto* p = playerInput.load()) p->addMessageToQueue(m);  // straight to the sound player, without the UI's delay
         // Show it on screen (keys light up, wheels and sliders move) on the message thread, without sending it twice.
         juce::MessageManager::callAsync([this, m, alive = aliveFlag] {

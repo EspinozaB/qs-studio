@@ -262,6 +262,7 @@ EditorTab::EditorTab(Session& s) : session(s) {
         addAndMakeVisible(c);
     fxBtn.setTooltip("Opens the effect this program is playing through, in the Effects editor.");
     fxBtn.onClick = [this] {
+        if (editNumber == 0) session.effectsProgram = prog;
         if (session.openEffectsEditor) session.openEffectsEditor(qs::Effects(), juce::String(prog.name()).trimEnd() + " effect", editNumber > 0 ? 1 : 0);
     };
     compareBtn.setClickingTogglesState(true);

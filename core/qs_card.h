@@ -33,6 +33,9 @@ struct CardImage {
     std::vector<std::string> mixNames;      // 100
 
     bool isRom = false;               // an internal sample ROM dump rather than a card
+    bool samplesSwapped = false;      // sample words are little-endian in this file (found by checkSampleByteOrder)
+    bool samplesLookWrong = false;    // neither byte order looks like audio: the voice directory doesn't match the data
+    std::string sampleCheck;          // what checkSampleByteOrder measured, for the log
     bool valid() const { return !voices.empty() || !programNames.empty(); }
     // In a ROM, a zone's start-address bit 22 (flagsB bit 0) picks the second 8 MB chip. A dump of the first chip alone
     // can't play those zones.
@@ -45,6 +48,10 @@ struct CardImage {
     Bytes program(int i) const;
     Bytes mix(int i) const;  // 138 bytes (new format) or 123 bytes (R-series old format)
 };
+
+// Real audio changes little from one sample to the next; the same words read in the wrong byte order jump all over
+// (loud noise). Measures both orders over the image's zones and sets samplesSwapped if little-endian is the smooth one.
+void checkSampleByteOrder(CardImage& c);
 
 // Where each zone of a voice plays: key range (MIDI notes) and velocity range. Same mapping as the SFZ export.
 struct Region {
